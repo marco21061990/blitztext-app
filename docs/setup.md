@@ -34,6 +34,8 @@ To launch after building:
 ## 3. Configure OpenAI For Online Workflows
 
 Open the app settings and paste your own OpenAI API key if you want online transcription or rewriting workflows.
+After saving it, click **OpenAI Key testen** in the same settings section to
+verify that the key can reach the OpenAI API.
 
 The preview currently uses:
 
@@ -65,7 +67,12 @@ The app needs Microphone permission to record audio.
 
 For automatic paste into the previous app, grant Accessibility permission in macOS System Settings. Without it, you can still copy and paste manually.
 
-Blitztext does not need Full Disk Access. Auto-paste uses the Accessibility permission because the app simulates Cmd+V after putting the result on the clipboard.
+Blitztext does not need Full Disk Access. Auto-paste uses the Accessibility permission because the app activates the previous app and sends paste commands after putting the result on the clipboard. macOS may also prompt for Automation access to System Events the first time Blitztext uses the System Events paste path.
+
+macOS ties Accessibility permissions to the app's code identity. Local builds
+prefer an Apple Development signature to keep that identity stable. If the
+signature changes after a rebuild, remove the old Blitztext entry under
+Accessibility and grant the permission again to the app in its final location.
 
 ## Troubleshooting
 
@@ -73,8 +80,8 @@ Blitztext does not need Full Disk Access. Auto-paste uses the Accessibility perm
 - If the build cannot find XcodeGen, install it explicitly with `brew install xcodegen`.
 - If online transcription fails immediately, check whether the API key is present and valid.
 - If secure local mode is disabled, check whether a WhisperKit model is installed in the expected folder.
-- If transcription works but paste does not, this is not an OpenAI billing issue. Check **Privacy & Security -> Accessibility**, restart Blitztext after changing the permission, and make sure the cursor is focused in a text field before starting the workflow.
-- If macOS shows multiple Blitztext entries under Accessibility, remove or disable stale entries, run the app from the final location (`/Applications` if you used `./build.sh --install`), then grant the permission again.
-- If the target app blocks synthetic paste or the target app was not detected, the result still stays on the clipboard so you can press Cmd+V manually.
+- If transcription works but paste does not, this is not an OpenAI billing issue. Check **Privacy & Security -> Accessibility**, allow Automation access to System Events if macOS prompts for it, restart Blitztext after changing permissions, and make sure the cursor is focused in a text field before starting the workflow.
+- If macOS shows multiple Blitztext entries under Accessibility, remove or disable stale entries, run the app from the final location (`/Applications` if you used `./build.sh --install`), then grant the permission again. Restart Blitztext after changing this setting.
+- If the target app blocks paste commands or the target app was not detected, the result stays on the clipboard so you can press Cmd+V manually.
 - If audio is missing, check Microphone permission and macOS input settings.
 - If you see OpenAI errors, verify model access and account billing.

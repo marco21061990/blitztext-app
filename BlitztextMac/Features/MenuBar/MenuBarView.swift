@@ -98,6 +98,12 @@ struct MenuBarView: View {
                     .padding(.bottom, 6)
             }
 
+            if appState.autoPasteStatusIsVisible, let statusText = appState.autoPasteStatusText {
+                autoPasteStatusBanner(statusText: statusText, pasted: appState.autoPasteSucceeded)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+            }
+
             // Workflow list
             VStack(spacing: 0) {
                 ForEach(WorkflowType.mainMenuCases) { type in
@@ -224,6 +230,41 @@ struct MenuBarView: View {
         }
 
         return "Blitztext nutzt gerade die OpenAI-Transkription."
+    }
+
+    private func autoPasteStatusBanner(statusText: String, pasted: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: pasted ? "checkmark.circle.fill" : "doc.on.clipboard.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(pasted ? .green : .orange)
+                .frame(width: 18, height: 18)
+
+            Text(statusText)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 4)
+
+            Button {
+                appState.autoPasteStatusIsVisible = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill((pasted ? Color.green : Color.orange).opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder((pasted ? Color.green : Color.orange).opacity(0.16), lineWidth: 0.5)
+        )
     }
 
     private var accessibilityHintBanner: some View {
@@ -601,19 +642,19 @@ struct MenuBarView: View {
                 switch workflow.type {
                 case .transcription, .localTranscription:
                     if let w = workflow as? TranscriptionWorkflow {
-                        TranscriptionActiveView(workflow: w)
+                        TranscriptionActiveView(appState: appState, workflow: w)
                     }
                 case .textImprover:
                     if let w = workflow as? TextImprovementWorkflow {
-                        TextImproverActiveView(workflow: w)
+                        TextImproverActiveView(appState: appState, workflow: w)
                     }
                 case .dampfAblassen:
                     if let w = workflow as? DampfAblassenWorkflow {
-                        DampfAblassenActiveView(workflow: w)
+                        DampfAblassenActiveView(appState: appState, workflow: w)
                     }
                 case .emojiText:
                     if let w = workflow as? EmojiTextWorkflow {
-                        EmojiTextActiveView(workflow: w)
+                        EmojiTextActiveView(appState: appState, workflow: w)
                     }
                 }
 
@@ -662,6 +703,7 @@ struct SubtleButtonStyle: ButtonStyle {
 // MARK: - Transcription Active View
 
 struct TranscriptionActiveView: View {
+    @Bindable var appState: AppState
     @Bindable var workflow: TranscriptionWorkflow
 
     var body: some View {
@@ -675,7 +717,11 @@ struct TranscriptionActiveView: View {
                 }
 
             case .done(let text):
-                autoPasteView(text: text)
+                autoPasteView(
+                    text: text,
+                    statusText: appState.autoPasteStatusText,
+                    pasted: appState.autoPasteSucceeded
+                )
 
             case .error(let msg):
                 errorView(message: msg) {
@@ -722,6 +768,7 @@ struct TranscriptionActiveView: View {
 // MARK: - Text Improver Active View
 
 struct TextImproverActiveView: View {
+    @Bindable var appState: AppState
     @Bindable var workflow: TextImprovementWorkflow
 
     var body: some View {
@@ -748,7 +795,11 @@ struct TextImproverActiveView: View {
                 }
 
             case .done(let text):
-                autoPasteView(text: text)
+                autoPasteView(
+                    text: text,
+                    statusText: appState.autoPasteStatusText,
+                    pasted: appState.autoPasteSucceeded
+                )
 
             case .error(let msg):
                 errorView(message: msg) {
@@ -795,6 +846,7 @@ struct TextImproverActiveView: View {
 // MARK: - Rage Mode Active View
 
 struct DampfAblassenActiveView: View {
+    @Bindable var appState: AppState
     @Bindable var workflow: DampfAblassenWorkflow
 
     var body: some View {
@@ -821,7 +873,11 @@ struct DampfAblassenActiveView: View {
                 }
 
             case .done(let text):
-                autoPasteView(text: text)
+                autoPasteView(
+                    text: text,
+                    statusText: appState.autoPasteStatusText,
+                    pasted: appState.autoPasteSucceeded
+                )
 
             case .error(let msg):
                 errorView(message: msg) {
@@ -868,6 +924,7 @@ struct DampfAblassenActiveView: View {
 // MARK: - Emoji Text Active View
 
 struct EmojiTextActiveView: View {
+    @Bindable var appState: AppState
     @Bindable var workflow: EmojiTextWorkflow
 
     var body: some View {
@@ -894,7 +951,11 @@ struct EmojiTextActiveView: View {
                 }
 
             case .done(let text):
-                autoPasteView(text: text)
+                autoPasteView(
+                    text: text,
+                    statusText: appState.autoPasteStatusText,
+                    pasted: appState.autoPasteSucceeded
+                )
 
             case .error(let msg):
                 errorView(message: msg) {
@@ -953,22 +1014,25 @@ private func processingView(message: String) -> some View {
     }
 }
 
-private func autoPasteView(text: String) -> some View {
-    VStack(spacing: 12) {
+private func autoPasteView(text: String, statusText: String?, pasted: Bool) -> some View {
+    let resolvedStatusText = statusText ?? "Wird eingefügt ..."
+
+    return VStack(spacing: 12) {
         Spacer().frame(height: 20)
 
         ZStack {
             Circle()
-                .fill(Color.green.opacity(0.1))
+                .fill((pasted ? Color.green : Color.orange).opacity(0.1))
                 .frame(width: 44, height: 44)
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: pasted ? "checkmark.circle.fill" : "doc.on.clipboard.fill")
                 .font(.system(size: 24))
-                .foregroundStyle(.green)
+                .foregroundStyle(pasted ? .green : .orange)
         }
 
-        Text("Eingef\u{00FC}gt")
+        Text(resolvedStatusText)
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(.primary)
+            .multilineTextAlignment(.center)
 
         Text(text)
             .font(.system(size: 11))

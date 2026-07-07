@@ -32,11 +32,12 @@ final class EmojiTextWorkflow: Workflow {
     // MARK: - Workflow Protocol
 
     func start() {
-        phase = .running("Aufnahme l\u{00E4}uft ...")
         recorder.startRecording()
 
         if let error = recorder.errorMessage {
             phase = .error(error)
+        } else {
+            phase = .running("Aufnahme läuft ...")
         }
     }
 

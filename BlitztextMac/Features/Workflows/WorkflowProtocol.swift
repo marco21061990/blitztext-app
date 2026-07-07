@@ -106,6 +106,7 @@ protocol Workflow: AnyObject, Observable {
     var type: WorkflowType { get }
     var phase: WorkflowPhase { get set }
     var isRecording: Bool { get }
+    var audioLevel: Float { get }
     var onOutput: WorkflowOutputHandler? { get set }
     var onPhaseChange: WorkflowPhaseChangeHandler? { get set }
 

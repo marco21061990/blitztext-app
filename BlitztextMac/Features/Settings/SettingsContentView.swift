@@ -70,6 +70,9 @@ struct AccessSettingsView: View {
     @State private var editingAPIKey = false
     @State private var saved = false
     @State private var saveErrorText: String?
+    @State private var isTestingOpenAIAPIKey = false
+    @State private var openAIAPIKeyTestText: String?
+    @State private var openAIAPIKeyTestSucceeded = false
     @State private var installActionErrorText: String?
     @State private var showCleanupOptions = false
     @State private var deleteLocalDataOnCleanup = true
@@ -108,6 +111,11 @@ struct AccessSettingsView: View {
 
                     Button("Erneut prüfen") {
                         appState.refreshAccessibilityPermission()
+                    }
+                    .buttonStyle(SubtleButtonStyle())
+
+                    Button("Einfügen testen") {
+                        appState.testAutoPaste()
                     }
                     .buttonStyle(SubtleButtonStyle())
                 }
@@ -158,6 +166,21 @@ struct AccessSettingsView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    Button(isTestingOpenAIAPIKey ? "Teste..." : "OpenAI Key testen") {
+                        testOpenAIAPIKey()
+                    }
+                    .buttonStyle(SubtleButtonStyle())
+                    .disabled(isTestingOpenAIAPIKey)
+
+                    if let openAIAPIKeyTestText {
+                        Text(openAIAPIKeyTestText)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(openAIAPIKeyTestSucceeded ? .green : .red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -372,6 +395,7 @@ struct AccessSettingsView: View {
 
     private func save() {
         saveErrorText = nil
+        openAIAPIKeyTestText = nil
         cleanupStatusText = nil
         cleanupErrorText = nil
         KeychainService.invalidateCache()
@@ -386,6 +410,7 @@ struct AccessSettingsView: View {
                 try KeychainService.save(key: .openAIAPIKey, value: trimmedAPIKey)
                 openAIAPIKey = ""
                 editingAPIKey = false
+                openAIAPIKeyTestText = nil
             } catch {
                 saveErrorText = "OpenAI API Key konnte nicht gespeichert werden."
                 return
@@ -420,6 +445,40 @@ struct AccessSettingsView: View {
         openAIAPIKey = trimmedKey
         NSPasteboard.general.clearContents()
         saveErrorText = nil
+        openAIAPIKeyTestText = nil
+    }
+
+    private func testOpenAIAPIKey() {
+        guard !isTestingOpenAIAPIKey else { return }
+
+        saveErrorText = nil
+        cleanupStatusText = nil
+        cleanupErrorText = nil
+
+        guard appState.hasValue(for: .openAIAPIKey), !editingAPIKey else {
+            openAIAPIKeyTestSucceeded = false
+            openAIAPIKeyTestText = "Bitte zuerst OpenAI API Key speichern."
+            return
+        }
+
+        isTestingOpenAIAPIKey = true
+        openAIAPIKeyTestSucceeded = false
+        openAIAPIKeyTestText = "Teste OpenAI API..."
+
+        Task {
+            let result = await OpenAIKeyValidationService.validateStoredKey()
+            await MainActor.run {
+                isTestingOpenAIAPIKey = false
+                switch result {
+                case .success(let message):
+                    openAIAPIKeyTestSucceeded = true
+                    openAIAPIKeyTestText = message
+                case .failure(let message):
+                    openAIAPIKeyTestSucceeded = false
+                    openAIAPIKeyTestText = message
+                }
+            }
+        }
     }
 
     private var installationHeadline: String {

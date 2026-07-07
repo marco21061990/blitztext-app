@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blitztext Recording Overlay Mockup</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101214;
+      --panel: rgba(26, 28, 31, 0.76);
+      --panel-strong: rgba(14, 15, 18, 0.88);
+      --stroke: rgba(255, 255, 255, 0.14);
+      --text: rgba(255, 255, 255, 0.94);
+      --muted: rgba(255, 255, 255, 0.58);
+      --red: #ff4b55;
+      --green: #36e287;
+      --blue: #63a8ff;
+      --yellow: #ffd05a;
+      --shadow: 0 22px 55px rgba(0, 0, 0, 0.38);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 10%, rgba(99, 168, 255, 0.15), transparent 28%),
+        linear-gradient(135deg, #121417 0%, #202328 45%, #101214 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    .desktop {
+      position: relative;
+      min-height: 100vh;
+      padding: 54px 42px 38px;
+    }
+
+    .menu-bar {
+      position: absolute;
+      inset: 0 0 auto;
+      height: 32px;
+      background: rgba(246, 246, 246, 0.72);
+      color: rgba(0, 0, 0, 0.78);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      font-size: 13px;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .menu-left,
+    .menu-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      white-space: nowrap;
+    }
+
+    .window {
+      width: min(1040px, calc(100vw - 84px));
+      height: min(660px, calc(100vh - 110px));
+      margin: 0 auto;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      background: rgba(245, 246, 248, 0.94);
+      color: #17191c;
+      box-shadow: 0 34px 90px rgba(0, 0, 0, 0.36);
+      overflow: hidden;
+    }
+
+    .window-bar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: #ff5f57;
+    }
+
+    .dot:nth-child(2) {
+      background: #febc2e;
+    }
+
+    .dot:nth-child(3) {
+      background: #28c840;
+    }
+
+    .editor {
+      height: calc(100% - 42px);
+      padding: 44px 56px;
+      font-size: 22px;
+      line-height: 1.5;
+      color: #25272b;
+      background:
+        linear-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px),
+        #f7f8fa;
+      background-size: 100% 38px;
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1.1em;
+      margin-left: 2px;
+      background: #236bff;
+      vertical-align: -0.16em;
+      animation: blink 1.05s steps(2, start) infinite;
+    }
+
+    .stage-label {
+      position: absolute;
+      left: 42px;
+      bottom: 30px;
+      color: var(--muted);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .variant-strip {
+      position: absolute;
+      right: 42px;
+      bottom: 24px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    .variant {
+      width: 196px;
+      padding: 12px;
+      border: 1px solid var(--stroke);
+      border-radius: 10px;
+      background: rgba(10, 11, 13, 0.42);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    .variant-title {
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .overlay {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      color: var(--text);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px) saturate(1.25);
+      -webkit-backdrop-filter: blur(24px) saturate(1.25);
+    }
+
+    .hero-overlay {
+      position: absolute;
+      top: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .pill {
+      min-width: 248px;
+      height: 56px;
+      padding: 0 16px;
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      background: var(--panel);
+    }
+
+    .compact {
+      min-width: 188px;
+      height: 44px;
+      padding: 0 13px;
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      background: var(--panel-strong);
+    }
+
+    .notch {
+      position: relative;
+      min-width: 178px;
+      height: 42px;
+      padding: 0 20px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-top: 0;
+      border-radius: 0 0 23px 23px;
+      background: rgba(3, 4, 5, 0.94);
+      box-shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+      gap: 0;
+      justify-content: center;
+    }
+
+    .notch::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 62%);
+      pointer-events: none;
+    }
+
+    .micro-notch {
+      min-width: 132px;
+      height: 34px;
+      padding: 0 16px;
+      border-radius: 0 0 18px 18px;
+    }
+
+    .wide-notch {
+      min-width: 220px;
+      height: 42px;
+    }
+
+    .status-dot {
+      position: relative;
+      width: 10px;
+      height: 10px;
+      flex: 0 0 10px;
+      border-radius: 999px;
+      background: var(--red);
+      box-shadow: 0 0 0 6px rgba(255, 75, 85, 0.15);
+    }
+
+    .status-dot::after {
+      content: "";
+      position: absolute;
+      inset: -9px;
+      border-radius: inherit;
+      border: 1px solid rgba(255, 75, 85, 0.28);
+      animation: pulse 1.45s ease-out infinite;
+    }
+
+    .label {
+      display: grid;
+      gap: 2px;
+      min-width: 56px;
+    }
+
+    .label strong {
+      font-size: 13px;
+      line-height: 1;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .label span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1;
+    }
+
+    .wave {
+      height: 24px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .bar {
+      width: 3px;
+      min-height: 4px;
+      border-radius: 999px;
+      background: rgba(54, 226, 135, 0.9);
+      animation: meter 900ms ease-in-out infinite;
+      animation-delay: calc(var(--i) * -58ms);
+      opacity: 0.74;
+    }
+
+    .bar:nth-child(3n) {
+      background: rgba(54, 226, 135, 1);
+      opacity: 0.96;
+    }
+
+    .bar:nth-child(4n) {
+      animation-duration: 1120ms;
+    }
+
+    .bar:nth-child(5n) {
+      animation-duration: 740ms;
+    }
+
+    .time {
+      min-width: 34px;
+      color: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .option {
+      transform: scale(0.72);
+      transform-origin: left center;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+    }
+
+    @keyframes blink {
+      50% {
+        opacity: 0;
+      }
+    }
+
+    @keyframes pulse {
+      from {
+        transform: scale(0.68);
+        opacity: 0.75;
+      }
+      to {
+        transform: scale(1.38);
+        opacity: 0;
+      }
+    }
+
+    @keyframes meter {
+      0%, 100% {
+        height: 7px;
+      }
+      25% {
+        height: 22px;
+      }
+      50% {
+        height: 11px;
+      }
+      75% {
+        height: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="desktop">
+    <div class="menu-bar">
+      <div class="menu-left">
+        <strong>Blitztext</strong>
+        <span>Codex</span>
+        <span>Bearbeiten</span>
+        <span>Ansicht</span>
+      </div>
+      <div class="menu-right">
+        <span>●</span>
+        <span>Di. 22:42</span>
+      </div>
+    </div>
+
+    <section class="window" aria-label="Simulierter Zieltexteditor">
+      <div class="window-bar">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+      <div class="editor">
+        <p>
+          Lass uns die Aufnahme-Anzeige so gestalten, dass sie beim Diktieren
+          präsent ist, aber den eigentlichen Arbeitsfluss nicht dominiert.<span class="cursor"></span>
+        </p>
+      </div>
+    </section>
+
+    <div class="overlay notch hero-overlay" aria-label="Cleanes Aufnahme-Overlay">
+      <span class="wave" aria-hidden="true">
+        <i class="bar" style="--i:1"></i>
+        <i class="bar" style="--i:2"></i>
+        <i class="bar" style="--i:3"></i>
+        <i class="bar" style="--i:4"></i>
+        <i class="bar" style="--i:5"></i>
+        <i class="bar" style="--i:6"></i>
+        <i class="bar" style="--i:7"></i>
+        <i class="bar" style="--i:8"></i>
+        <i class="bar" style="--i:9"></i>
+        <i class="bar" style="--i:10"></i>
+        <i class="bar" style="--i:11"></i>
+        <i class="bar" style="--i:12"></i>
+      </span>
+    </div>
+
+    <div class="stage-label">Clean Notch: keine Marke, kein Record-Punkt, nur grüne Stimme.</div>
+
+    <aside class="variant-strip" aria-label="Overlay Varianten">
+      <div class="variant">
+        <div class="variant-title">Micro</div>
+        <div class="overlay notch micro-notch option">
+          <span class="wave">
+            <i class="bar" style="--i:1"></i><i class="bar" style="--i:2"></i><i class="bar" style="--i:3"></i>
+            <i class="bar" style="--i:4"></i><i class="bar" style="--i:5"></i><i class="bar" style="--i:6"></i>
+          </span>
+        </div>
+      </div>
+      <div class="variant">
+        <div class="variant-title">Default</div>
+        <div class="overlay notch option">
+          <span class="wave">
+            <i class="bar" style="--i:1"></i><i class="bar" style="--i:2"></i><i class="bar" style="--i:3"></i>
+            <i class="bar" style="--i:4"></i><i class="bar" style="--i:5"></i><i class="bar" style="--i:6"></i>
+            <i class="bar" style="--i:7"></i><i class="bar" style="--i:8"></i>
+          </span>
+        </div>
+      </div>
+      <div class="variant">
+        <div class="variant-title">Wide</div>
+        <div class="overlay notch wide-notch option">
+          <span class="wave">
+            <i class="bar" style="--i:1"></i><i class="bar" style="--i:2"></i><i class="bar" style="--i:3"></i>
+            <i class="bar" style="--i:4"></i><i class="bar" style="--i:5"></i><i class="bar" style="--i:6"></i>
+            <i class="bar" style="--i:7"></i><i class="bar" style="--i:8"></i><i class="bar" style="--i:9"></i>
+            <i class="bar" style="--i:10"></i><i class="bar" style="--i:11"></i>
+          </span>
+        </div>
+      </div>
+    </aside>
+  </main>
+</body>
+</html>

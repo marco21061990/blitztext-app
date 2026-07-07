@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover!
     private let menuBarStatusController = MenuBarStatusController()
     let appState = AppState()
+    private lazy var recordingOverlayController = RecordingOverlayController { [weak self] in
+        self?.appState.recordingOverlayState ?? .hidden
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -42,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         appState.onMenuBarStatusChange = { [weak self] status in
             self?.menuBarStatusController.update(to: status)
         }
+        appState.onRecordingOverlayStateChange = { [weak self] state in
+            self?.recordingOverlayController.update(with: state)
+        }
         appState.hotkeyService.start()
 
         // Listen for popover dismiss requests (from auto-paste)
@@ -55,6 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.showOnboardingIfNeeded()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        recordingOverlayController.hide()
     }
 
     @objc private func handleDismissPopover() {
