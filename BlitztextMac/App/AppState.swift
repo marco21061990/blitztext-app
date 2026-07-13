@@ -1,6 +1,7 @@
 import SwiftUI
 import Observation
 import AppKit
+import ApplicationServices
 import os
 
 enum PopoverPage: Equatable {
@@ -90,6 +91,7 @@ final class AppState {
             isRecording: activeWorkflow.isRecording,
             isRunningPhase: isRunningPhase,
             audioLevel: activeWorkflow.audioLevel,
+            targetElementFrame: activePasteTarget?.targetElementFrame,
             targetScreenFrame: activePasteTarget?.targetScreenFrame
         )
     }
@@ -112,6 +114,8 @@ final class AppState {
         case .textImprover:
             let name = textImprovementSettings.customName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? type.displayName : name
+        case .translateEN:
+            return type.displayName
         case .dampfAblassen:
             let name = dampfAblassenSettings.customName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? type.displayName : name
@@ -135,7 +139,7 @@ final class AppState {
             return "Online: Whisper über OpenAI."
         case .localTranscription:
             return "Nur lokal. Kein Server."
-        case .textImprover, .dampfAblassen, .emojiText:
+        case .textImprover, .translateEN, .dampfAblassen, .emojiText:
             if appSettings.secureLocalModeEnabled {
                 return "Im lokalen Modus pausiert."
             }
@@ -221,6 +225,15 @@ final class AppState {
             activeWorkflow = workflow
             workflow.start()
 
+        case .translateEN:
+            let workflow = TranslateENWorkflow(
+                customTerms: textImprovementSettings.customTerms,
+                language: transcriptionSettings.language
+            )
+            configureWorkflowHandlers(workflow)
+            activeWorkflow = workflow
+            workflow.start()
+
         case .dampfAblassen:
             let workflow = DampfAblassenWorkflow(
                 settings: dampfAblassenSettings,
@@ -254,7 +267,7 @@ final class AppState {
             return appSettings.secureLocalModeEnabled
                 ? selectedLocalModelIsInstalled
                 : KeychainService.isConfigured
-        case .textImprover, .dampfAblassen, .emojiText:
+        case .textImprover, .translateEN, .dampfAblassen, .emojiText:
             return !appSettings.secureLocalModeEnabled && KeychainService.isConfigured
         }
     }
@@ -682,8 +695,100 @@ final class AppState {
             localizedName: app.localizedName,
             processIdentifier: app.processIdentifier,
             application: app,
+            targetElementFrame: focusedTextElementFrame(for: app.processIdentifier),
             targetScreenFrame: screenFrameForFrontmostWindow(of: app)
         )
+    }
+
+    private func focusedTextElementFrame(for processIdentifier: pid_t) -> CGRect? {
+        let systemWideElement = AXUIElementCreateSystemWide()
+        var focusedObject: CFTypeRef?
+        let copyResult = AXUIElementCopyAttributeValue(
+            systemWideElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        )
+
+        guard copyResult == .success,
+              let focusedElement = focusedObject as! AXUIElement? else {
+            Self.autoPasteLogger.info("Focused AX element unavailable for overlay anchor. result=\(copyResult.rawValue)")
+            return nil
+        }
+
+        var focusedPID: pid_t = 0
+        guard AXUIElementGetPid(focusedElement, &focusedPID) == .success,
+              focusedPID == processIdentifier else {
+            return nil
+        }
+
+        return focusedTextSelectionFrame(from: focusedElement)
+            ?? focusedElementFrame(from: focusedElement)
+    }
+
+    private func focusedTextSelectionFrame(from element: AXUIElement) -> CGRect? {
+        var rangeObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeObject
+        ) == .success,
+              let rangeValue = rangeObject as! AXValue? else {
+            return nil
+        }
+
+        var boundsObject: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &boundsObject
+        ) == .success,
+              let boundsValue = boundsObject as! AXValue? else {
+            return nil
+        }
+
+        var bounds = CGRect.zero
+        guard AXValueGetValue(boundsValue, .cgRect, &bounds),
+              bounds.isUsableOverlayAnchor else {
+            return nil
+        }
+
+        return appKitRect(fromCGScreenFrame: bounds)
+    }
+
+    private func focusedElementFrame(from element: AXUIElement) -> CGRect? {
+        guard let position = copyCGPointAttribute(kAXPositionAttribute, from: element),
+              let size = copyCGSizeAttribute(kAXSizeAttribute, from: element) else {
+            return nil
+        }
+
+        let frame = CGRect(origin: position, size: size)
+        guard frame.isUsableOverlayAnchor else { return nil }
+        return appKitRect(fromCGScreenFrame: frame)
+    }
+
+    private func copyCGPointAttribute(_ attribute: String, from element: AXUIElement) -> CGPoint? {
+        var object: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &object) == .success,
+              let value = object as! AXValue? else {
+            return nil
+        }
+
+        var point = CGPoint.zero
+        guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    private func copyCGSizeAttribute(_ attribute: String, from element: AXUIElement) -> CGSize? {
+        var object: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &object) == .success,
+              let value = object as! AXValue? else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(value, .cgSize, &size) else { return nil }
+        return size
     }
 
     private func screenFrameForFrontmostWindow(of app: NSRunningApplication) -> CGRect? {
@@ -736,12 +841,31 @@ final class AppState {
             height: frame.height
         )
     }
+
+    private func appKitRect(fromCGScreenFrame frame: CGRect) -> CGRect {
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else {
+            return frame
+        }
+
+        return CGRect(
+            x: frame.origin.x,
+            y: primaryScreenHeight - frame.origin.y - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
+    }
 }
 
 private extension CGRect {
     var area: CGFloat {
         guard !isNull, !isEmpty else { return 0 }
         return width * height
+    }
+
+    var isUsableOverlayAnchor: Bool {
+        guard !isNull, !isEmpty else { return false }
+        guard origin.x.isFinite, origin.y.isFinite, width.isFinite, height.isFinite else { return false }
+        return width >= 1 && height >= 1
     }
 }
 
@@ -764,6 +888,7 @@ private struct PasteTarget {
     let localizedName: String?
     let processIdentifier: pid_t
     let application: NSRunningApplication
+    let targetElementFrame: CGRect?
     let targetScreenFrame: CGRect?
 
     var displayName: String {

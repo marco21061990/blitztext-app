@@ -37,6 +37,7 @@ Workflows should not own menu bar status or paste behavior.
 | `transcription` | OpenAI key exists, or secure local mode is enabled and selected local model is installed. |
 | `localTranscription` | Selected local model is installed. |
 | `textImprover` | Secure local mode is disabled and OpenAI key exists. |
+| `translateEN` | Secure local mode is disabled and OpenAI key exists. |
 | `dampfAblassen` | Secure local mode is disabled and OpenAI key exists. |
 | `emojiText` | Secure local mode is disabled and OpenAI key exists. |
 
@@ -52,6 +53,7 @@ implemented.
 | `fn + Shift` | Blitztext transcription |
 | `fn + Shift + Control` | Local transcription |
 | `fn + Control` | Blitztext+ text improvement |
+| `fn + Shift + Option` | Translate EN conservative prompt translation |
 | `fn + Option` | Blitztext `$%&!` calmer-message rewrite |
 | `fn + Command` | Blitztext `:)` emoji text |
 
@@ -97,6 +99,23 @@ Settings:
 - context
 - tone
 - custom display name
+
+Default model: `gpt-4o-mini`.
+
+## Translate EN Workflow
+
+File: `BlitztextMac/Features/Workflows/TranslateENWorkflow.swift`
+
+The workflow:
+
+1. Records German speech.
+2. Transcribes remotely through OpenAI Whisper.
+3. Rejects likely short-recording artifacts.
+4. Sends the transcript to `LLMService.translateToEnglishPrompt(...)`.
+5. Translates conservatively into English for coding-agent prompts.
+6. Preserves file paths, commands, branch names, code identifiers, quoted text,
+   product names, and technical terms when possible.
+7. Emits only the translated English text.
 
 Default model: `gpt-4o-mini`.
 

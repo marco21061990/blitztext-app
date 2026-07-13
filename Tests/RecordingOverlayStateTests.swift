@@ -9,6 +9,7 @@ struct RecordingOverlayStateTests {
         try assertIdleRecordingFlagIsHidden()
         try assertAudioLevelIsClamped()
         try assertTargetScreenFrameIsPreserved()
+        try assertTargetElementFrameIsPreserved()
     }
 
     private static func assertRecordingIsVisible() throws {
@@ -18,7 +19,7 @@ struct RecordingOverlayStateTests {
             audioLevel: 0.42
         )
 
-        guard state == RecordingOverlayState(isVisible: true, audioLevel: 0.42, targetScreenFrame: nil) else {
+        guard state == RecordingOverlayState(isVisible: true, audioLevel: 0.42, targetElementFrame: nil, targetScreenFrame: nil) else {
             throw TestFailure("Expected visible recording state, got \(state)")
         }
     }
@@ -75,6 +76,20 @@ struct RecordingOverlayStateTests {
 
         guard state.targetScreenFrame == frame else {
             throw TestFailure("Expected target screen frame to be preserved, got \(String(describing: state.targetScreenFrame))")
+        }
+    }
+
+    private static func assertTargetElementFrameIsPreserved() throws {
+        let frame = CGRect(x: 420, y: 260, width: 360, height: 28)
+        let state = RecordingOverlayState.make(
+            isRecording: true,
+            isRunningPhase: true,
+            audioLevel: 0.25,
+            targetElementFrame: frame
+        )
+
+        guard state.targetElementFrame == frame else {
+            throw TestFailure("Expected target element frame to be preserved, got \(String(describing: state.targetElementFrame))")
         }
     }
 }

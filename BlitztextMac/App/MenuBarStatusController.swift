@@ -183,7 +183,7 @@ private enum MenuBarStatusIconRenderer {
             switch type {
             case .transcription, .localTranscription:
                 values = [0.74, 1.0, 0.82, 0.92]
-            case .textImprover:
+            case .textImprover, .translateEN:
                 values = [0.66, 0.84, 1.0, 0.8]
             case .dampfAblassen:
                 values = [1.0, 0.76, 0.94, 0.68]
@@ -197,7 +197,7 @@ private enum MenuBarStatusIconRenderer {
             switch type {
             case .transcription, .localTranscription:
                 values = [0.58, 0.72, 0.9, 0.72]
-            case .textImprover:
+            case .textImprover, .translateEN:
                 values = [0.48, 0.68, 0.92, 0.84]
             case .dampfAblassen:
                 values = [0.84, 0.62, 0.9, 0.56]
@@ -292,7 +292,7 @@ private enum MenuBarStatusIconRenderer {
                 [0.4, 0.62, 0.88, 1.0],
             ]
             return patterns[frame % patterns.count]
-        case .textImprover:
+        case .textImprover, .translateEN:
             let patterns: [[CGFloat]] = [
                 [1.0, 0.88, 0.52, 0.3],
                 [0.86, 1.0, 0.84, 0.44],
@@ -329,7 +329,7 @@ private enum MenuBarStatusIconRenderer {
                 [0.92, 0.8, 0.64, 0.5],
             ]
             return patterns[frame % patterns.count]
-        case .textImprover:
+        case .textImprover, .translateEN:
             let patterns: [[CGFloat]] = [
                 [1.0, 0.76, 0.52, 0.34],
                 [0.86, 1.0, 0.74, 0.48],
@@ -364,6 +364,8 @@ private enum MenuBarStatusIconRenderer {
             return "lock.shield.fill"
         case .textImprover:
             return "text.alignleft"
+        case .translateEN:
+            return "character.bubble.fill"
         case .dampfAblassen:
             return "flame.fill"
         case .emojiText:

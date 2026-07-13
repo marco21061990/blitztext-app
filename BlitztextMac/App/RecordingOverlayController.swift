@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 final class RecordingOverlayController {
     fileprivate static let panelSize = NSSize(width: 178, height: 42)
+    private static let targetElementSpacing: CGFloat = 10
 
     private let model = RecordingOverlayModel()
     private let stateProvider: () -> RecordingOverlayState
@@ -125,6 +126,11 @@ final class RecordingOverlayController {
     }
 
     private func position(_ panel: NSPanel, for state: RecordingOverlayState) {
+        if let targetElementFrame = state.targetElementFrame,
+           position(panel, near: targetElementFrame) {
+            return
+        }
+
         guard let screen = targetScreen(for: state) else { return }
 
         let visibleFrame = screen.visibleFrame
@@ -134,6 +140,36 @@ final class RecordingOverlayController {
         )
 
         panel.setFrame(NSRect(origin: origin, size: Self.panelSize), display: true)
+    }
+
+    private func position(_ panel: NSPanel, near targetElementFrame: CGRect) -> Bool {
+        guard let screen = screen(containing: targetElementFrame) else { return false }
+
+        let visibleFrame = screen.visibleFrame
+        let preferredAboveY = targetElementFrame.maxY + Self.targetElementSpacing
+        let preferredBelowY = targetElementFrame.minY - Self.targetElementSpacing - Self.panelSize.height
+        let y: CGFloat
+
+        if preferredAboveY + Self.panelSize.height <= visibleFrame.maxY {
+            y = preferredAboveY
+        } else if preferredBelowY >= visibleFrame.minY {
+            y = preferredBelowY
+        } else {
+            y = clamp(
+                targetElementFrame.midY - Self.panelSize.height / 2,
+                min: visibleFrame.minY,
+                max: visibleFrame.maxY - Self.panelSize.height
+            )
+        }
+
+        let x = clamp(
+            targetElementFrame.midX - Self.panelSize.width / 2,
+            min: visibleFrame.minX,
+            max: visibleFrame.maxX - Self.panelSize.width
+        )
+
+        panel.setFrame(NSRect(origin: NSPoint(x: x, y: y), size: Self.panelSize), display: true)
+        return true
     }
 
     private func targetScreen(for state: RecordingOverlayState) -> NSScreen? {
@@ -147,6 +183,31 @@ final class RecordingOverlayController {
         return NSScreen.screens.first { screen in
             NSMouseInRect(mouseLocation, screen.frame, false)
         } ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func screen(containing frame: CGRect) -> NSScreen? {
+        let candidates = NSScreen.screens.map { screen in
+            (screen: screen, area: screen.frame.intersection(frame).area)
+        }
+
+        guard let best = candidates.max(by: { $0.area < $1.area }),
+              best.area > 0 else {
+            return nil
+        }
+
+        return best.screen
+    }
+
+    private func clamp(_ value: CGFloat, min minimum: CGFloat, max maximum: CGFloat) -> CGFloat {
+        guard maximum >= minimum else { return minimum }
+        return Swift.min(Swift.max(value, minimum), maximum)
+    }
+}
+
+private extension CGRect {
+    var area: CGFloat {
+        guard !isNull, !isEmpty else { return 0 }
+        return width * height
     }
 }
 
@@ -179,11 +240,11 @@ private struct RecordingOverlayView: View {
         }
         .frame(width: RecordingOverlayController.panelSize.width, height: RecordingOverlayController.panelSize.height)
         .background(
-            RecordingOverlayNotchShape(radius: 23)
+            Capsule()
                 .fill(Color.black.opacity(0.92))
         )
         .overlay {
-            RecordingOverlayNotchShape(radius: 23)
+            Capsule()
                 .fill(
                     LinearGradient(
                         colors: [.white.opacity(0.08), .clear],
@@ -193,43 +254,11 @@ private struct RecordingOverlayView: View {
                 )
         }
         .overlay {
-            RecordingOverlayNotchShape(radius: 23)
+            Capsule()
                 .strokeBorder(.white.opacity(0.10), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.34), radius: 21, y: 10)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Blitztext Aufnahme läuft")
-    }
-}
-
-private struct RecordingOverlayNotchShape: InsettableShape {
-    var radius: CGFloat
-    var insetAmount: CGFloat = 0
-
-    func path(in rect: CGRect) -> Path {
-        let rect = rect.insetBy(dx: insetAmount, dy: insetAmount)
-        let resolvedRadius = min(radius, rect.width / 2, rect.height)
-
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - resolvedRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - resolvedRadius, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
-        )
-        path.addLine(to: CGPoint(x: rect.minX + resolvedRadius, y: rect.maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - resolvedRadius),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
-        )
-        path.closeSubpath()
-        return path
-    }
-
-    func inset(by amount: CGFloat) -> RecordingOverlayNotchShape {
-        var shape = self
-        shape.insetAmount += amount
-        return shape
     }
 }

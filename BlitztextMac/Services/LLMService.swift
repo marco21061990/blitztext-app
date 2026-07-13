@@ -94,6 +94,18 @@ enum LLMService {
         )
     }
 
+    static func translateToEnglishPrompt(
+        text: String,
+        model: RewriteModel = .fastEdit
+    ) async throws -> String {
+        try await complete(
+            text: text,
+            systemPrompt: buildTranslateENSystemPrompt(),
+            model: model,
+            temperature: 0.2
+        )
+    }
+
     static func addEmojis(
         text: String,
         settings: EmojiTextSettings,
@@ -168,6 +180,18 @@ enum LLMService {
         }
 
         return "Du erhaeltst ein gesprochenes Transkript. Gib den Text moeglichst originalgetreu zurueck, aber fuege passende Emojis ein. \(densityInstruction) Korrigiere offensichtliche Sprach- und Grammatikfehler. Behalte den Stil und die Bedeutung bei. Gib NUR den Text mit Emojis zurueck, keine Erklaerungen."
+    }
+
+    private static func buildTranslateENSystemPrompt() -> String {
+        """
+        Translate the dictated German text into English for use as a coding-agent prompt.
+
+        Stay very close to the user's wording, intent, order, and level of detail. Correct only obvious dictation errors, grammar, punctuation, and speech artifacts. Do not reframe the request, do not make it more formal, and do not add structure unless the original text clearly contains multiple separate points.
+
+        Preserve file paths, commands, branch names, code identifiers, model names, product names, quoted text, and technical terms exactly when possible.
+
+        Return only the translated English text. No heading, no commentary.
+        """
     }
 
     private static func buildSystemPrompt(settings: TextImprovementSettings) -> String {

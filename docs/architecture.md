@@ -69,6 +69,8 @@ Concrete workflows:
 - `TranscriptionWorkflow`: audio to text, using remote OpenAI or local
   WhisperKit depending on selected backend.
 - `TextImprovementWorkflow`: remote transcription, then OpenAI text improvement.
+- `TranslateENWorkflow`: remote transcription, then conservative German to
+  English prompt translation.
 - `DampfAblassenWorkflow`: remote transcription, then calmer-message rewrite.
 - `EmojiTextWorkflow`: remote transcription, then emoji insertion rewrite.
 

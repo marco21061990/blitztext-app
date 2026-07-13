@@ -31,10 +31,15 @@ enum HotkeyEvent {
 @Observable
 @MainActor
 final class HotkeyService {
+    private static let chordResolutionDelay: Duration = .milliseconds(90)
+
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var keyMonitor: Any?
     private var activeCombo: WorkflowType?  // Which combo is currently held
+    private var pendingComboTask: Task<Void, Never>?
+    private var latestFlags: NSEvent.ModifierFlags = []
+    private var isWaitingForModifierReset = false
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
 
@@ -64,68 +69,112 @@ final class HotkeyService {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        pendingComboTask?.cancel()
         globalMonitor = nil
         localMonitor = nil
         keyMonitor = nil
+        pendingComboTask = nil
+        activeCombo = nil
+        latestFlags = []
+        isWaitingForModifierReset = false
     }
 
     private func handleFlags(_ event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        latestFlags = flags
 
-        // fn + Shift + Control -> local transcription
-        if flags == [.function, .shift, .control] {
-            if activeCombo == nil {
-                activeCombo = .localTranscription
-                onHotkeyEvent?(.down(.localTranscription))
+        if isWaitingForModifierReset {
+            if flags.intersection(Self.workflowModifierMask).isEmpty {
+                isWaitingForModifierReset = false
             }
             return
         }
 
-        // fn + Shift -> transcription
-        if flags == [.function, .shift] {
-            if activeCombo == nil {
-                activeCombo = .transcription
-                onHotkeyEvent?(.down(.transcription))
-            }
+        if let activeCombo {
+            guard Self.workflow(for: flags) != activeCombo else { return }
+
+            pendingComboTask?.cancel()
+            pendingComboTask = nil
+            self.activeCombo = nil
+            isWaitingForModifierReset = !flags.intersection(Self.workflowModifierMask).isEmpty
+            onHotkeyEvent?(.up(activeCombo))
             return
         }
 
-        // fn + Control -> Textverbesserer
-        if flags == [.function, .control] {
-            if activeCombo == nil {
-                activeCombo = .textImprover
-                onHotkeyEvent?(.down(.textImprover))
-            }
+        guard let combo = Self.workflow(for: flags) else {
+            pendingComboTask?.cancel()
+            pendingComboTask = nil
             return
         }
 
-        // fn + Option -> Rage Mode
-        if flags == [.function, .option] {
-            if activeCombo == nil {
-                activeCombo = .dampfAblassen
-                onHotkeyEvent?(.down(.dampfAblassen))
-            }
+        pendingComboTask?.cancel()
+
+        // Three-modifier chords are unambiguous and should override a pending
+        // two-modifier prefix immediately.
+        if Self.isExtendedChord(combo) {
+            pendingComboTask = nil
+            activate(combo)
             return
         }
 
-        // fn + Command -> Emoji Mode
-        if flags == [.function, .command] {
-            if activeCombo == nil {
-                activeCombo = .emojiText
-                onHotkeyEvent?(.down(.emojiText))
+        let expectedFlags = flags
+        pendingComboTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.chordResolutionDelay)
+            guard !Task.isCancelled,
+                  let self,
+                  self.activeCombo == nil,
+                  !self.isWaitingForModifierReset,
+                  self.latestFlags == expectedFlags else {
+                return
             }
-            return
-        }
 
-        // Keys released -- fire up event
-        if let combo = activeCombo {
-            activeCombo = nil
-            onHotkeyEvent?(.up(combo))
+            self.pendingComboTask = nil
+            self.activate(combo)
         }
     }
 
+    private func activate(_ combo: WorkflowType) {
+        guard activeCombo == nil else { return }
+        activeCombo = combo
+        onHotkeyEvent?(.down(combo))
+    }
+
+    private static let workflowModifierMask: NSEvent.ModifierFlags = [
+        .function,
+        .shift,
+        .control,
+        .option,
+        .command,
+    ]
+
+    private static func workflow(for flags: NSEvent.ModifierFlags) -> WorkflowType? {
+        switch flags.intersection(workflowModifierMask) {
+        case [.function, .shift, .control]:
+            return .localTranscription
+        case [.function, .shift, .option]:
+            return .translateEN
+        case [.function, .shift]:
+            return .transcription
+        case [.function, .control]:
+            return .textImprover
+        case [.function, .option]:
+            return .dampfAblassen
+        case [.function, .command]:
+            return .emojiText
+        default:
+            return nil
+        }
+    }
+
+    private static func isExtendedChord(_ combo: WorkflowType) -> Bool {
+        combo == .localTranscription || combo == .translateEN
+    }
+
     private func handleEscape() {
+        pendingComboTask?.cancel()
+        pendingComboTask = nil
         activeCombo = nil
+        isWaitingForModifierReset = false
         onHotkeyEvent?(.cancel)
     }
 }

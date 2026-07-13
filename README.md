@@ -12,6 +12,7 @@ This is a learning and experimentation project, not a polished product.
 
 - **Blitztext**: record speech and transcribe it.
 - **Blitztext+**: record speech, transcribe it, then turn the rough draft into cleaner writing.
+- **Translate EN**: dictate in German and paste a close English translation for coding prompts.
 - **Blitztext $%&!**: turn frustrated speech into a calmer message.
 - **Blitztext :)**: add fitting emojis to dictated text.
 
