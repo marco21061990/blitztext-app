@@ -1,6 +1,8 @@
 import SwiftUI
 import Observation
 import AppKit
+import ApplicationServices
+import os
 
 enum PopoverPage: Equatable {
     case main
@@ -12,8 +14,9 @@ enum PopoverPage: Equatable {
 @Observable
 @MainActor
 final class AppState {
-    private static let pasteRetryInitialAttempts = 22
+    private static let pasteRetryInitialAttempts = 70
     private static let concealedPasteboardType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    private static let autoPasteLogger = Logger(subsystem: "app.blitztext.mac", category: "AutoPaste")
 
     var activeWorkflow: (any Workflow)?
     var page: PopoverPage = .main
@@ -28,7 +31,11 @@ final class AppState {
     var localModelDownloadProgress: Double?
     var localModelDownloadStatusText: String?
     var localModelDownloadErrorText: String?
+    var autoPasteSucceeded = false
+    var autoPasteStatusText: String?
+    var autoPasteStatusIsVisible = false
     var onMenuBarStatusChange: ((MenuBarStatus) -> Void)?
+    var onRecordingOverlayStateChange: ((RecordingOverlayState) -> Void)?
     private var activeLaunchSource: WorkflowLaunchSource = .manual
     private var activePasteTarget: PasteTarget?
     private var lastPopoverPasteTarget: PasteTarget?
@@ -70,6 +77,25 @@ final class AppState {
         activeWorkflow?.phase ?? .idle
     }
 
+    var recordingOverlayState: RecordingOverlayState {
+        guard let activeWorkflow else { return .hidden }
+
+        let isRunningPhase: Bool
+        if case .running = activeWorkflow.phase {
+            isRunningPhase = true
+        } else {
+            isRunningPhase = false
+        }
+
+        return RecordingOverlayState.make(
+            isRecording: activeWorkflow.isRecording,
+            isRunningPhase: isRunningPhase,
+            audioLevel: activeWorkflow.audioLevel,
+            targetElementFrame: activePasteTarget?.targetElementFrame,
+            targetScreenFrame: activePasteTarget?.targetScreenFrame
+        )
+    }
+
     init() {
         self.appSettings = Self.loadAppSettings()
         self.transcriptionSettings = Self.loadTranscriptionSettings()
@@ -88,6 +114,8 @@ final class AppState {
         case .textImprover:
             let name = textImprovementSettings.customName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? type.displayName : name
+        case .translateEN:
+            return type.displayName
         case .dampfAblassen:
             let name = dampfAblassenSettings.customName.trimmingCharacters(in: .whitespaces)
             return name.isEmpty ? type.displayName : name
@@ -111,7 +139,7 @@ final class AppState {
             return "Online: Whisper über OpenAI."
         case .localTranscription:
             return "Nur lokal. Kein Server."
-        case .textImprover, .dampfAblassen, .emojiText:
+        case .textImprover, .translateEN, .dampfAblassen, .emojiText:
             if appSettings.secureLocalModeEnabled {
                 return "Im lokalen Modus pausiert."
             }
@@ -158,6 +186,9 @@ final class AppState {
         activeWorkflow?.stop()
         menuBarStatusResetTask?.cancel()
         workflowCleanupTask?.cancel()
+        autoPasteSucceeded = false
+        autoPasteStatusText = nil
+        autoPasteStatusIsVisible = false
         activeLaunchSource = source
         activePasteTarget = capturePasteTarget(for: source)
 
@@ -194,6 +225,15 @@ final class AppState {
             activeWorkflow = workflow
             workflow.start()
 
+        case .translateEN:
+            let workflow = TranslateENWorkflow(
+                customTerms: textImprovementSettings.customTerms,
+                language: transcriptionSettings.language
+            )
+            configureWorkflowHandlers(workflow)
+            activeWorkflow = workflow
+            workflow.start()
+
         case .dampfAblassen:
             let workflow = DampfAblassenWorkflow(
                 settings: dampfAblassenSettings,
@@ -216,6 +256,7 @@ final class AppState {
         }
 
         page = source.presentsWorkflowPage ? .workflow : .main
+        notifyRecordingOverlayStateChanged()
     }
 
     func isWorkflowAvailable(_ type: WorkflowType) -> Bool {
@@ -226,7 +267,7 @@ final class AppState {
             return appSettings.secureLocalModeEnabled
                 ? selectedLocalModelIsInstalled
                 : KeychainService.isConfigured
-        case .textImprover, .dampfAblassen, .emojiText:
+        case .textImprover, .translateEN, .dampfAblassen, .emojiText:
             return !appSettings.secureLocalModeEnabled && KeychainService.isConfigured
         }
     }
@@ -244,6 +285,7 @@ final class AppState {
         workflowCleanupTask?.cancel()
         menuBarStatus = .idle
         page = .main
+        notifyRecordingOverlayStateChanged()
     }
 
     func enableSecureLocalMode() {
@@ -293,25 +335,43 @@ final class AppState {
         writeSensitiveTextToPasteboard(text)
     }
 
+    func testAutoPaste() {
+        let testText = "Blitztext Test"
+        pasteAtCursor(testText, target: lastPopoverPasteTarget)
+        scheduleWorkflowCleanup(after: 2.5)
+    }
+
     // MARK: - Auto-Paste
 
-    /// Copies the text, restores focus when needed, then simulates Cmd+V.
-    /// The text intentionally remains on the clipboard as a fallback if paste is blocked.
+    /// Restores focus, inserts through Accessibility when possible, then falls back to clipboard Cmd+V.
+    /// The text intentionally remains on the clipboard if the fallback path is needed.
     private func pasteAtCursor(_ text: String, target: PasteTarget? = nil) {
-        writeSensitiveTextToPasteboard(text)
+        autoPasteSucceeded = false
+        autoPasteStatusText = nil
+        autoPasteStatusIsVisible = false
+
+        let trusted = AccessibilityPermissionService.isTrusted(promptIfNeeded: true)
+        accessibilityPermissionGranted = trusted
+        Self.autoPasteLogger.info("Output ready. trusted=\(trusted) target=\(target?.diagnosticName ?? "nil", privacy: .public) popoverShown=\(self.isPopoverShown)")
+        guard trusted else {
+            writeSensitiveTextToPasteboard(text)
+            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber Bedienungshilfen sind für diese App-Version nicht freigegeben.")
+            menuBarStatus = .error(activeWorkflow?.type)
+            return
+        }
+
+        guard let target else {
+            writeSensitiveTextToPasteboard(text)
+            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber es wurde kein Ziel-App-Fenster erkannt.")
+            return
+        }
 
         if isPopoverShown {
             NotificationCenter.default.post(name: .dismissPopover, object: nil)
         }
 
-        let trusted = AccessibilityPermissionService.isTrusted(promptIfNeeded: true)
-        accessibilityPermissionGranted = trusted
-        guard trusted else {
-            menuBarStatus = .error(activeWorkflow?.type)
-            return
-        }
-
         attemptPasteTrusted(
+            text: text,
             target: target,
             attemptsRemaining: Self.pasteRetryInitialAttempts
         )
@@ -452,7 +512,7 @@ final class AppState {
         if activeLaunchSource == .hotkeyBackground {
             page = .main
         }
-        scheduleWorkflowCleanup(after: 1.05)
+        scheduleWorkflowCleanup(after: 2.5)
     }
 
     private func configureWorkflowHandlers<T: Workflow>(_ workflow: T) {
@@ -491,6 +551,8 @@ final class AppState {
             }
             scheduleMenuBarStatusReset(after: 1.6)
         }
+
+        notifyRecordingOverlayStateChanged()
     }
 
     private func scheduleWorkflowCleanup(after delay: TimeInterval) {
@@ -512,6 +574,7 @@ final class AppState {
                 self.page = .main
             }
             self.menuBarStatus = .idle
+            self.notifyRecordingOverlayStateChanged()
         }
     }
 
@@ -525,6 +588,10 @@ final class AppState {
         }
     }
 
+    private func notifyRecordingOverlayStateChanged() {
+        onRecordingOverlayStateChange?(recordingOverlayState)
+    }
+
     private func capturePasteTarget(for source: WorkflowLaunchSource) -> PasteTarget? {
         switch source {
         case .manual:
@@ -535,52 +602,86 @@ final class AppState {
     }
 
     private func attemptPasteTrusted(
-        target: PasteTarget?,
+        text: String,
+        target: PasteTarget,
         attemptsRemaining: Int
     ) {
         let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
 
-        if let target {
-            if frontmostPid == target.processIdentifier {
-                performPaste()
-                return
+        if frontmostPid == target.processIdentifier {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+                self?.performPaste(text: text, target: target)
             }
-
-            target.application.activate(options: [])
-        } else {
             return
         }
 
+        if attemptsRemaining == Self.pasteRetryInitialAttempts {
+            Self.autoPasteLogger.info("Activating target app for paste: \(target.diagnosticName, privacy: .public)")
+        }
+        target.application.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+
         guard attemptsRemaining > 0 else {
+            Self.autoPasteLogger.error("Target activation timed out: \(target.diagnosticName, privacy: .public)")
+            writeSensitiveTextToPasteboard(text)
+            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber \(target.displayName) konnte nicht aktiviert werden.")
+            menuBarStatus = .error(activeWorkflow?.type)
             return
         }
 
         let delay: TimeInterval
         switch attemptsRemaining {
-        case 16...:
-            delay = 0.015
-        case 8...15:
+        case 45...:
             delay = 0.025
-        default:
+        case 20...44:
             delay = 0.04
+        default:
+            delay = 0.075
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.attemptPasteTrusted(
+                text: text,
                 target: target,
                 attemptsRemaining: attemptsRemaining - 1
             )
         }
     }
 
-    private func performPaste() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-        keyDown?.flags = .maskCommand
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+    private func performPaste(text: String, target: PasteTarget) {
+        let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard frontmostPid == target.processIdentifier else {
+            Self.autoPasteLogger.error("Paste cancelled because focus changed before Cmd+V. expected=\(target.processIdentifier) actual=\(frontmostPid ?? -1)")
+            writeSensitiveTextToPasteboard(text)
+            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber der Fokus wechselte vor dem Einfügen.")
+            menuBarStatus = .error(activeWorkflow?.type)
+            return
+        }
+
+        switch AutoPasteService.pasteWithTemporaryClipboard(
+            text,
+            targetProcessIdentifier: target.processIdentifier
+        ) {
+        case .pasteCommandDispatched(let method):
+            autoPasteSucceeded = true
+            autoPasteStatusText = "Einfügen ausgelöst"
+            autoPasteStatusIsVisible = true
+            Self.autoPasteLogger.info("Paste command dispatched. method=\(method.rawValue, privacy: .public) target=\(target.diagnosticName, privacy: .public)")
+
+        case .copiedOnly:
+            markAutoPasteFallback("Einfügen konnte nicht ausgelöst werden. Text bleibt kopiert.")
+            menuBarStatus = .error(activeWorkflow?.type)
+
+        case .failedToCopy:
+            markAutoPasteFallback("Nicht automatisch eingefügt. Text konnte nicht in die Zwischenablage kopiert werden.")
+            menuBarStatus = .error(activeWorkflow?.type)
+        }
+    }
+
+    private func markAutoPasteFallback(_ message: String) {
+        autoPasteSucceeded = false
+        autoPasteStatusText = message
+        autoPasteStatusIsVisible = true
+        Self.autoPasteLogger.error("\(message, privacy: .public)")
     }
 
     private func captureCurrentFrontmostApp() -> PasteTarget? {
@@ -591,9 +692,180 @@ final class AppState {
 
         return PasteTarget(
             bundleIdentifier: app.bundleIdentifier,
+            localizedName: app.localizedName,
             processIdentifier: app.processIdentifier,
-            application: app
+            application: app,
+            targetElementFrame: focusedTextElementFrame(for: app.processIdentifier),
+            targetScreenFrame: screenFrameForFrontmostWindow(of: app)
         )
+    }
+
+    private func focusedTextElementFrame(for processIdentifier: pid_t) -> CGRect? {
+        let systemWideElement = AXUIElementCreateSystemWide()
+        var focusedObject: CFTypeRef?
+        let copyResult = AXUIElementCopyAttributeValue(
+            systemWideElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        )
+
+        guard copyResult == .success,
+              let focusedElement = focusedObject as! AXUIElement? else {
+            Self.autoPasteLogger.info("Focused AX element unavailable for overlay anchor. result=\(copyResult.rawValue)")
+            return nil
+        }
+
+        var focusedPID: pid_t = 0
+        guard AXUIElementGetPid(focusedElement, &focusedPID) == .success,
+              focusedPID == processIdentifier else {
+            return nil
+        }
+
+        return focusedTextSelectionFrame(from: focusedElement)
+            ?? focusedElementFrame(from: focusedElement)
+    }
+
+    private func focusedTextSelectionFrame(from element: AXUIElement) -> CGRect? {
+        var rangeObject: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &rangeObject
+        ) == .success,
+              let rangeValue = rangeObject as! AXValue? else {
+            return nil
+        }
+
+        var boundsObject: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &boundsObject
+        ) == .success,
+              let boundsValue = boundsObject as! AXValue? else {
+            return nil
+        }
+
+        var bounds = CGRect.zero
+        guard AXValueGetValue(boundsValue, .cgRect, &bounds),
+              bounds.isUsableOverlayAnchor else {
+            return nil
+        }
+
+        return appKitRect(fromCGScreenFrame: bounds)
+    }
+
+    private func focusedElementFrame(from element: AXUIElement) -> CGRect? {
+        guard let position = copyCGPointAttribute(kAXPositionAttribute, from: element),
+              let size = copyCGSizeAttribute(kAXSizeAttribute, from: element) else {
+            return nil
+        }
+
+        let frame = CGRect(origin: position, size: size)
+        guard frame.isUsableOverlayAnchor else { return nil }
+        return appKitRect(fromCGScreenFrame: frame)
+    }
+
+    private func copyCGPointAttribute(_ attribute: String, from element: AXUIElement) -> CGPoint? {
+        var object: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &object) == .success,
+              let value = object as! AXValue? else {
+            return nil
+        }
+
+        var point = CGPoint.zero
+        guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    private func copyCGSizeAttribute(_ attribute: String, from element: AXUIElement) -> CGSize? {
+        var object: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &object) == .success,
+              let value = object as! AXValue? else {
+            return nil
+        }
+
+        var size = CGSize.zero
+        guard AXValueGetValue(value, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    private func screenFrameForFrontmostWindow(of app: NSRunningApplication) -> CGRect? {
+        guard let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else {
+            return nil
+        }
+
+        for window in windowInfo {
+            guard let ownerPid = window[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPid == app.processIdentifier,
+                  let layer = window[kCGWindowLayer as String] as? Int,
+                  layer == 0,
+                  let boundsDictionary = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
+                  !bounds.isEmpty,
+                  let screen = screen(containingCGWindowBounds: bounds) else {
+                continue
+            }
+
+            return screen.frame
+        }
+
+        return nil
+    }
+
+    private func screen(containingCGWindowBounds bounds: CGRect) -> NSScreen? {
+        let candidates = NSScreen.screens.map { screen in
+            let intersection = cgRect(fromAppKitScreenFrame: screen.frame).intersection(bounds)
+            return (screen: screen, area: intersection.area)
+        }
+
+        guard let best = candidates.max(by: { $0.area < $1.area }),
+              best.area > 0 else {
+            return nil
+        }
+
+        return best.screen
+    }
+
+    private func cgRect(fromAppKitScreenFrame frame: CGRect) -> CGRect {
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else {
+            return frame
+        }
+
+        return CGRect(
+            x: frame.origin.x,
+            y: primaryScreenHeight - frame.origin.y - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    private func appKitRect(fromCGScreenFrame frame: CGRect) -> CGRect {
+        guard let primaryScreenHeight = NSScreen.screens.first?.frame.height else {
+            return frame
+        }
+
+        return CGRect(
+            x: frame.origin.x,
+            y: primaryScreenHeight - frame.origin.y - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+}
+
+private extension CGRect {
+    var area: CGFloat {
+        guard !isNull, !isEmpty else { return 0 }
+        return width * height
+    }
+
+    var isUsableOverlayAnchor: Bool {
+        guard !isNull, !isEmpty else { return false }
+        guard origin.x.isFinite, origin.y.isFinite, width.isFinite, height.isFinite else { return false }
+        return width >= 1 && height >= 1
     }
 }
 
@@ -613,6 +885,17 @@ extension Notification.Name {
 
 private struct PasteTarget {
     let bundleIdentifier: String?
+    let localizedName: String?
     let processIdentifier: pid_t
     let application: NSRunningApplication
+    let targetElementFrame: CGRect?
+    let targetScreenFrame: CGRect?
+
+    var displayName: String {
+        localizedName ?? bundleIdentifier ?? "Die Ziel-App"
+    }
+
+    var diagnosticName: String {
+        "\(displayName) pid=\(processIdentifier)"
+    }
 }

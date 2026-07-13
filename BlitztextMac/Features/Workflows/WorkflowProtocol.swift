@@ -6,6 +6,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
     case transcription
     case localTranscription
     case textImprover
+    case translateEN
     case dampfAblassen
     case emojiText
 
@@ -20,6 +21,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
         case .transcription: return "Blitztext"
         case .localTranscription: return "Blitztext Lokal"
         case .textImprover: return "Blitztext+"
+        case .translateEN: return "Translate EN"
         case .dampfAblassen: return "Blitztext $%&!"
         case .emojiText: return "Blitztext :)"
         }
@@ -30,6 +32,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
         case .transcription: return "mic.fill"
         case .localTranscription: return "lock.shield.fill"
         case .textImprover: return "text.badge.checkmark"
+        case .translateEN: return "character.bubble.fill"
         case .dampfAblassen: return "flame.fill"
         case .emojiText: return "face.smiling"
         }
@@ -40,6 +43,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
         case .transcription: return "Sprache rein. Text raus."
         case .localTranscription: return "Nur lokal. Kein Server."
         case .textImprover: return "Geschrieben sprechen."
+        case .translateEN: return "Deutsch sprechen. Englisch prompten."
         case .dampfAblassen: return "Frust rein. Entspannt raus."
         case .emojiText: return "Text rein. Emojis dazu."
         }
@@ -50,6 +54,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
         case .transcription: return "fn + Shift"
         case .localTranscription: return "fn + Shift + Ctrl"
         case .textImprover: return "fn + Control"
+        case .translateEN: return "fn + Shift + Option"
         case .dampfAblassen: return "fn + Option"
         case .emojiText: return "fn + Cmd"
         }
@@ -60,6 +65,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
         case .transcription: return "blue"
         case .localTranscription: return "green"
         case .textImprover: return "purple"
+        case .translateEN: return "indigo"
         case .dampfAblassen: return "orange"
         case .emojiText: return "cyan"
         }
@@ -106,6 +112,7 @@ protocol Workflow: AnyObject, Observable {
     var type: WorkflowType { get }
     var phase: WorkflowPhase { get set }
     var isRecording: Bool { get }
+    var audioLevel: Float { get }
     var onOutput: WorkflowOutputHandler? { get set }
     var onPhaseChange: WorkflowPhaseChangeHandler? { get set }
 

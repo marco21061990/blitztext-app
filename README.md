@@ -12,6 +12,7 @@ This is a learning and experimentation project, not a polished product.
 
 - **Blitztext**: record speech and transcribe it.
 - **Blitztext+**: record speech, transcribe it, then turn the rough draft into cleaner writing.
+- **Translate EN**: dictate in German and paste a close English translation for coding prompts.
 - **Blitztext $%&!**: turn frustrated speech into a calmer message.
 - **Blitztext :)**: add fitting emojis to dictated text.
 
@@ -22,7 +23,7 @@ This is a learning and experimentation project, not a polished product.
 - No hosted Blitztext backend is included or provided.
 - In online mode, audio and text are sent directly from the app to the OpenAI API.
 - Optional local transcription via WhisperKit/CoreML if you install a compatible model locally.
-- `./build.sh` creates a locally ad-hoc-signed development app. No notarized release binary is provided.
+- `./build.sh` creates a locally signed development app. No notarized release binary is provided.
 - Not production ready.
 - No warranty and no support guarantee.
 
@@ -78,7 +79,10 @@ For a local install into `/Applications`:
 ./build.sh --install --run
 ```
 
-The generated `.app` is ad-hoc signed for local development only. Do not treat it as a trusted redistributable binary. A public binary release would need Developer ID signing and notarization.
+The generated `.app` is signed for local development only. The build script
+prefers a local Apple Development identity and falls back to ad-hoc signing. Do
+not treat it as a trusted redistributable binary. A public binary release would
+need Developer ID signing and notarization.
 
 On first launch, either paste your own OpenAI API key for online workflows or install a WhisperKit CoreML model for local transcription. Rewriting workflows still require OpenAI.
 
@@ -92,10 +96,11 @@ Blitztext asks for:
 
 - **Microphone**: to record your voice.
 - **Accessibility**: to paste the result back into the app you were using.
+- **Automation / System Events**: macOS may ask for this when Blitztext sends the paste command through System Events.
 
 If you do not grant Accessibility permission, you can still copy results manually.
 
-Full Disk Access is not required. If auto-paste does not work even though transcription succeeds, open **System Settings -> Privacy & Security -> Accessibility**, enable Blitztext there, restart Blitztext, and try again with the cursor focused in a text field. If macOS shows multiple Blitztext entries, remove or disable the old ones and grant the permission to the app you just built or installed.
+Full Disk Access is not required. If auto-paste does not work even though transcription succeeds, open **System Settings -> Privacy & Security -> Accessibility**, enable Blitztext there, restart Blitztext, and try again with the cursor focused in a text field. If macOS prompts for Automation access to System Events, allow it so Blitztext can send the paste command. If macOS shows multiple Blitztext entries, remove or disable the old ones and grant the permission to the app you just built or installed.
 
 ## Data Flow
 

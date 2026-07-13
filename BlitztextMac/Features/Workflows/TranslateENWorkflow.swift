@@ -4,8 +4,8 @@ import Observation
 
 @Observable
 @MainActor
-final class EmojiTextWorkflow: Workflow {
-    let type = WorkflowType.emojiText
+final class TranslateENWorkflow: Workflow {
+    let type = WorkflowType.translateEN
     var phase: WorkflowPhase = .idle {
         didSet { onPhaseChange?(phase) }
     }
@@ -13,23 +13,17 @@ final class EmojiTextWorkflow: Workflow {
     var onPhaseChange: WorkflowPhaseChangeHandler?
 
     private let recorder = AudioRecorder()
-    private let settings: EmojiTextSettings
     private let customTerms: [String]
     private let language: String
     private var processingTask: Task<Void, Never>?
 
-    init(settings: EmojiTextSettings, customTerms: [String] = [], language: String = "de") {
-        self.settings = settings
+    init(customTerms: [String] = [], language: String = "de") {
         self.customTerms = customTerms
         self.language = language
     }
 
-    // MARK: - Recording State
-
     var isRecording: Bool { recorder.isRecording }
     var audioLevel: Float { recorder.audioLevel }
-
-    // MARK: - Workflow Protocol
 
     func start() {
         recorder.startRecording()
@@ -65,8 +59,6 @@ final class EmojiTextWorkflow: Workflow {
         phase = .idle
     }
 
-    // MARK: - Two-Phase Processing: Whisper -> Emoji
-
     private func processRecording() {
         guard let url = recorder.recordingURL else {
             phase = .error("Keine Aufnahme vorhanden.")
@@ -83,7 +75,6 @@ final class EmojiTextWorkflow: Workflow {
             }
 
             do {
-                // Phase 1: Whisper transcription
                 let rawText = try await TranscriptionService.transcribe(
                     audioURL: url,
                     customTerms: vocabularyHints,
@@ -97,20 +88,12 @@ final class EmojiTextWorkflow: Workflow {
 
                 if Task.isCancelled { return }
 
-                // Phase 2: Add emojis
-                phase = .running("Emojis werden eingef\u{00FC}gt ...")
+                phase = .running("Wird übersetzt ...")
 
-                let result = try await LLMService.addEmojis(
-                    text: cleanedRawText,
-                    settings: settings
-                )
-                let cleanedResult = TranscriptionQualityService.cleanedTranscript(result)
-                guard cleanedResult != "KEINE_AUFNAHME_ERKANNT" else {
-                    phase = .error("Keine Aufnahme erkannt.")
-                    return
-                }
-                phase = .done(cleanedResult)
-                onOutput?(cleanedResult)
+                let translated = try await LLMService.translateToEnglishPrompt(text: cleanedRawText)
+                let cleanedTranslated = TranscriptionQualityService.cleanedTranscript(translated)
+                phase = .done(cleanedTranslated)
+                onOutput?(cleanedTranslated)
             } catch {
                 phase = .error(error.localizedDescription)
             }

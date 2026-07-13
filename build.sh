@@ -63,6 +63,37 @@ verify_universal_app() {
     echo "✅ Universal Binary verifiziert: $archs"
 }
 
+resolve_codesign_identity() {
+    if [[ -n "${BLITZTEXT_CODESIGN_IDENTITY:-}" ]]; then
+        echo "$BLITZTEXT_CODESIGN_IDENTITY"
+        return
+    fi
+
+    local identity
+    identity="$(security find-identity -v -p codesigning 2>/dev/null \
+        | awk -F '"' '/Apple Development:/ { print $2; exit }')"
+
+    if [[ -n "$identity" ]]; then
+        echo "$identity"
+    else
+        echo "-"
+    fi
+}
+
+sign_app() {
+    local app_path="$1"
+    local identity="$2"
+    local entitlements_path="$PROJECT_DIR/Resources/BlitztextMac.entitlements"
+
+    if [[ "$identity" == "-" ]]; then
+        echo "🔏 Signiere lokale Development-App ad-hoc. Dieses Artefakt ist nicht notarisiert."
+    else
+        echo "🔏 Signiere lokale Development-App mit: $identity"
+    fi
+
+    codesign --force --deep --options runtime --entitlements "$entitlements_path" --sign "$identity" "$app_path" 2>&1
+}
+
 ensure_xcodebuild_available() {
     if xcodebuild -version >/dev/null 2>&1; then
         return
@@ -87,6 +118,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/BlitztextMac"
 PROJECT_FILE="$PROJECT_DIR/BlitztextMac.xcodeproj"
 DERIVED_DATA_PATH="$SCRIPT_DIR/.derivedData-blitztextmac-build"
+CODE_SIGN_IDENTITY_RESOLVED="$(resolve_codesign_identity)"
 cd "$PROJECT_DIR"
 
 ensure_xcodebuild_available
@@ -138,8 +170,7 @@ cp -f "$PROJECT_DIR/Resources/menubar_icon@2x.png" "$RESOURCES_DIR/" 2>/dev/null
 DEST="$SCRIPT_DIR/Blitztext.app"
 rm -rf "$DEST"
 cp -R "$APP_PATH" "$DEST"
-echo "🔏 Signiere lokale Development-App ad-hoc. Dieses Artefakt ist nicht notarisiert."
-codesign --force --sign - "$DEST" 2>&1
+sign_app "$DEST" "$CODE_SIGN_IDENTITY_RESOLVED"
 verify_universal_app "$DEST"
 
 RUN_TARGET="$DEST"
@@ -154,8 +185,7 @@ if [ "$INSTALL_APP" = true ]; then
     fi
     rm -rf "$INSTALL_DEST"
     cp -R "$DEST" "$INSTALL_DEST"
-    echo "🔏 Signiere lokale Development-App ad-hoc. Dieses Artefakt ist nicht notarisiert."
-    codesign --force --sign - "$INSTALL_DEST" 2>&1
+    sign_app "$INSTALL_DEST" "$CODE_SIGN_IDENTITY_RESOLVED"
     verify_universal_app "$INSTALL_DEST"
     RUN_TARGET="$INSTALL_DEST"
 fi
