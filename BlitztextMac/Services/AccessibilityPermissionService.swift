@@ -31,4 +31,11 @@ enum AccessibilityPermissionService {
         }
         NSWorkspace.shared.open(url)
     }
+
+    static func openAutomationSystemSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
 }

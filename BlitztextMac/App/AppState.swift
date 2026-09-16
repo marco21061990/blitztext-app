@@ -36,7 +36,9 @@ final class AppState {
     var autoPasteStatusIsVisible = false
     var onMenuBarStatusChange: ((MenuBarStatus) -> Void)?
     var onRecordingOverlayStateChange: ((RecordingOverlayState) -> Void)?
+    private(set) var isPreparingWorkflow = false
     private var activeLaunchSource: WorkflowLaunchSource = .manual
+    private var activeMediaSessionID: UUID?
     private var activePasteTarget: PasteTarget?
     private var lastPopoverPasteTarget: PasteTarget?
     private var menuBarStatusResetTask: Task<Void, Never>?
@@ -64,6 +66,7 @@ final class AppState {
 
     // Hotkeys
     let hotkeyService = HotkeyService()
+    let mediaPlaybackCoordinator = MediaPlaybackCoordinator()
 
     // Computed
     var isConfigured: Bool {
@@ -243,7 +246,7 @@ final class AppState {
             return
         }
 
-        activeWorkflow?.stop()
+        replaceActiveWorkflowIfNeeded()
         menuBarStatusResetTask?.cancel()
         workflowCleanupTask?.cancel()
         autoPasteSucceeded = false
@@ -252,71 +255,58 @@ final class AppState {
         activeLaunchSource = source
         activePasteTarget = capturePasteTarget(for: source)
 
+        let workflow: any Workflow
         switch type {
         case .transcription:
-            let workflow = TranscriptionWorkflow(
+            workflow = TranscriptionWorkflow(
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language,
                 backend: appSettings.secureLocalModeEnabled ? .local : .remote,
                 localModelName: selectedLocalModelName
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
 
         case .localTranscription:
-            let workflow = TranscriptionWorkflow(
+            workflow = TranscriptionWorkflow(
                 type: .localTranscription,
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language,
                 backend: .local,
                 localModelName: selectedLocalModelName
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
 
         case .textImprover:
-            let workflow = TextImprovementWorkflow(
+            workflow = TextImprovementWorkflow(
                 settings: textImprovementSettings,
                 language: transcriptionSettings.language
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
 
         case .translateEN:
-            let workflow = TranslateENWorkflow(
+            workflow = TranslateENWorkflow(
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
 
         case .dampfAblassen:
-            let workflow = DampfAblassenWorkflow(
+            workflow = DampfAblassenWorkflow(
                 settings: dampfAblassenSettings,
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
 
         case .emojiText:
-            let workflow = EmojiTextWorkflow(
+            workflow = EmojiTextWorkflow(
                 settings: emojiTextSettings,
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language
             )
-            configureWorkflowHandlers(workflow)
-            activeWorkflow = workflow
-            workflow.start()
         }
 
+        configureWorkflowHandlers(workflow)
+        activeWorkflow = workflow
+        isPreparingWorkflow = true
         page = source.presentsWorkflowPage ? .workflow : .main
         notifyRecordingOverlayStateChanged()
+        prepareAndStartWorkflow(workflow)
     }
 
     func isWorkflowAvailable(_ type: WorkflowType) -> Bool {
@@ -333,12 +323,34 @@ final class AppState {
     }
 
     func stopCurrentWorkflow() {
-        activeWorkflow?.stop()
+        guard let activeWorkflow else { return }
+        if activeWorkflow.isRecording {
+            activeWorkflow.stop()
+        } else {
+            cancelCurrentWorkflow()
+        }
+    }
+
+    func cancelCurrentWorkflow() {
+        resetCurrentWorkflow()
+    }
+
+    func retryCurrentWorkflow() {
+        guard let activeWorkflow else { return }
+        let type = activeWorkflow.type
+        let source = activeLaunchSource
+        resetCurrentWorkflow()
+        startWorkflow(type, source: source)
     }
 
     func resetCurrentWorkflow() {
-        activeWorkflow?.reset()
+        finishMediaPlaybackSession(outcome: .cancelled)
+        mediaPlaybackCoordinator.cancelPendingPreparation()
+
+        let workflow = activeWorkflow
+        isPreparingWorkflow = false
         activeWorkflow = nil
+        workflow?.reset()
         activePasteTarget = nil
         activeLaunchSource = .manual
         menuBarStatusResetTask?.cancel()
@@ -346,6 +358,68 @@ final class AppState {
         menuBarStatus = .idle
         page = .main
         notifyRecordingOverlayStateChanged()
+    }
+
+    private func replaceActiveWorkflowIfNeeded() {
+        guard activeWorkflow != nil || activeMediaSessionID != nil else {
+            mediaPlaybackCoordinator.cancelPendingPreparation()
+            return
+        }
+
+        finishMediaPlaybackSession(outcome: .cancelled)
+        mediaPlaybackCoordinator.cancelPendingPreparation()
+
+        let workflow = activeWorkflow
+        isPreparingWorkflow = false
+        activeWorkflow = nil
+        workflow?.reset()
+        activePasteTarget = nil
+        activeLaunchSource = .manual
+    }
+
+    private func prepareAndStartWorkflow(_ workflow: any Workflow) {
+        let workflowID = ObjectIdentifier(workflow)
+        mediaPlaybackCoordinator.prepareForRecording(
+            enabled: appSettings.pauseMediaDuringDictation
+        ) { [weak self] handle in
+            guard let self,
+                  let activeWorkflow = self.activeWorkflow,
+                  ObjectIdentifier(activeWorkflow) == workflowID else {
+                if let handle {
+                    self?.mediaPlaybackCoordinator.finish(handle, outcome: .cancelled)
+                }
+                return
+            }
+
+            self.isPreparingWorkflow = false
+            self.activeMediaSessionID = handle?.id
+            switch activeWorkflow.phase {
+            case .idle:
+                activeWorkflow.start()
+            case .running:
+                // A session can arrive after the 500 ms fail-open callback.
+                // The workflow may already be recording or processing; adopt
+                // the confirmed session and let the normal terminal path end
+                // it.
+                break
+            case .done, .error:
+                guard let handle else { return }
+                self.mediaPlaybackCoordinator.finish(handle, outcome: .failed)
+                self.activeMediaSessionID = nil
+            }
+        }
+    }
+
+    private func finishMediaPlaybackSession(outcome: MediaPlaybackOutcome) {
+        if let activeMediaSessionID {
+            mediaPlaybackCoordinator.finish(
+                MediaPlaybackSessionHandle(id: activeMediaSessionID),
+                outcome: outcome
+            )
+        } else {
+            mediaPlaybackCoordinator.finishActiveSession(outcome: outcome)
+        }
+        activeMediaSessionID = nil
     }
 
     func enableSecureLocalMode() {
@@ -405,7 +479,11 @@ final class AppState {
 
     /// Restores focus, inserts through Accessibility when possible, then falls back to clipboard Cmd+V.
     /// The text intentionally remains on the clipboard if the fallback path is needed.
-    private func pasteAtCursor(_ text: String, target: PasteTarget? = nil) {
+    private func pasteAtCursor(
+        _ text: String,
+        target: PasteTarget? = nil,
+        completion: ((Bool) -> Void)? = nil
+    ) {
         autoPasteSucceeded = false
         autoPasteStatusText = nil
         autoPasteStatusIsVisible = false
@@ -415,14 +493,20 @@ final class AppState {
         Self.autoPasteLogger.info("Output ready. trusted=\(trusted) target=\(target?.diagnosticName ?? "nil", privacy: .public) popoverShown=\(self.isPopoverShown)")
         guard trusted else {
             writeSensitiveTextToPasteboard(text)
-            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber Bedienungshilfen sind für diese App-Version nicht freigegeben.")
+            markAutoPasteFallback(
+                "Nicht automatisch eingefügt. Text wurde kopiert, aber Bedienungshilfen sind für diese App-Version nicht freigegeben.",
+                completion: completion
+            )
             menuBarStatus = .error(activeWorkflow?.type)
             return
         }
 
         guard let target else {
             writeSensitiveTextToPasteboard(text)
-            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber es wurde kein Ziel-App-Fenster erkannt.")
+            markAutoPasteFallback(
+                "Nicht automatisch eingefügt. Text wurde kopiert, aber es wurde kein Ziel-App-Fenster erkannt.",
+                completion: completion
+            )
             return
         }
 
@@ -433,7 +517,8 @@ final class AppState {
         attemptPasteTrusted(
             text: text,
             target: target,
-            attemptsRemaining: Self.pasteRetryInitialAttempts
+            attemptsRemaining: Self.pasteRetryInitialAttempts,
+            completion: completion
         )
     }
 
@@ -567,25 +652,52 @@ final class AppState {
         }
     }
 
-    private func handleWorkflowOutput(_ text: String) {
-        pasteAtCursor(text, target: activePasteTarget)
+    private func handleWorkflowOutput(_ text: String, workflow: any Workflow) {
+        guard let activeWorkflow,
+              ObjectIdentifier(activeWorkflow) == ObjectIdentifier(workflow) else {
+            return
+        }
+
+        pasteAtCursor(text, target: activePasteTarget) { [weak self] pasted in
+            guard let self,
+                  let activeWorkflow = self.activeWorkflow,
+                  ObjectIdentifier(activeWorkflow) == ObjectIdentifier(workflow) else {
+                return
+            }
+            self.finishMediaPlaybackSession(outcome: pasted ? .successfulPaste : .failed)
+        }
         if activeLaunchSource == .hotkeyBackground {
             page = .main
         }
         scheduleWorkflowCleanup(after: 2.5)
     }
 
-    private func configureWorkflowHandlers<T: Workflow>(_ workflow: T) {
+    private func configureWorkflowHandlers(_ workflow: any Workflow) {
+        let workflowID = ObjectIdentifier(workflow)
         workflow.onOutput = { [weak self] text in
-            self?.handleWorkflowOutput(text)
+            guard let self,
+                  let activeWorkflow = self.activeWorkflow,
+                  ObjectIdentifier(activeWorkflow) == workflowID else {
+                return
+            }
+            self.handleWorkflowOutput(text, workflow: activeWorkflow)
         }
-        workflow.onPhaseChange = { [weak self, weak workflow] phase in
-            guard let self, let workflow else { return }
-            self.handleWorkflowPhaseChange(phase, workflow: workflow)
+        workflow.onPhaseChange = { [weak self] phase in
+            guard let self,
+                  let activeWorkflow = self.activeWorkflow,
+                  ObjectIdentifier(activeWorkflow) == workflowID else {
+                return
+            }
+            self.handleWorkflowPhaseChange(phase, workflow: activeWorkflow)
         }
     }
 
     private func handleWorkflowPhaseChange(_ phase: WorkflowPhase, workflow: any Workflow) {
+        guard let currentWorkflow = activeWorkflow,
+              ObjectIdentifier(currentWorkflow) == ObjectIdentifier(workflow) else {
+            return
+        }
+
         menuBarStatusResetTask?.cancel()
 
         switch phase {
@@ -603,6 +715,7 @@ final class AppState {
             menuBarStatus = .success(workflow.type)
 
         case .error:
+            finishMediaPlaybackSession(outcome: .failed)
             menuBarStatus = .error(workflow.type)
             if activeLaunchSource == .hotkeyBackground {
                 activeWorkflow = nil
@@ -626,6 +739,7 @@ final class AppState {
             guard let self, let activeWorkflow = self.activeWorkflow else { return }
             guard ObjectIdentifier(activeWorkflow) == workflowID else { return }
 
+            self.finishMediaPlaybackSession(outcome: .failed)
             activeWorkflow.reset()
             self.activeWorkflow = nil
             self.activePasteTarget = nil
@@ -664,13 +778,14 @@ final class AppState {
     private func attemptPasteTrusted(
         text: String,
         target: PasteTarget,
-        attemptsRemaining: Int
+        attemptsRemaining: Int,
+        completion: ((Bool) -> Void)?
     ) {
         let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
 
         if frontmostPid == target.processIdentifier {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
-                self?.performPaste(text: text, target: target)
+                self?.performPaste(text: text, target: target, completion: completion)
             }
             return
         }
@@ -683,7 +798,10 @@ final class AppState {
         guard attemptsRemaining > 0 else {
             Self.autoPasteLogger.error("Target activation timed out: \(target.diagnosticName, privacy: .public)")
             writeSensitiveTextToPasteboard(text)
-            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber \(target.displayName) konnte nicht aktiviert werden.")
+            markAutoPasteFallback(
+                "Nicht automatisch eingefügt. Text wurde kopiert, aber \(target.displayName) konnte nicht aktiviert werden.",
+                completion: completion
+            )
             menuBarStatus = .error(activeWorkflow?.type)
             return
         }
@@ -702,17 +820,21 @@ final class AppState {
             self?.attemptPasteTrusted(
                 text: text,
                 target: target,
-                attemptsRemaining: attemptsRemaining - 1
+                attemptsRemaining: attemptsRemaining - 1,
+                completion: completion
             )
         }
     }
 
-    private func performPaste(text: String, target: PasteTarget) {
+    private func performPaste(text: String, target: PasteTarget, completion: ((Bool) -> Void)?) {
         let frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard frontmostPid == target.processIdentifier else {
             Self.autoPasteLogger.error("Paste cancelled because focus changed before Cmd+V. expected=\(target.processIdentifier) actual=\(frontmostPid ?? -1)")
             writeSensitiveTextToPasteboard(text)
-            markAutoPasteFallback("Nicht automatisch eingefügt. Text wurde kopiert, aber der Fokus wechselte vor dem Einfügen.")
+            markAutoPasteFallback(
+                "Nicht automatisch eingefügt. Text wurde kopiert, aber der Fokus wechselte vor dem Einfügen.",
+                completion: completion
+            )
             menuBarStatus = .error(activeWorkflow?.type)
             return
         }
@@ -726,22 +848,30 @@ final class AppState {
             autoPasteStatusText = "Einfügen ausgelöst"
             autoPasteStatusIsVisible = true
             Self.autoPasteLogger.info("Paste command dispatched. method=\(method.rawValue, privacy: .public) target=\(target.diagnosticName, privacy: .public)")
+            completion?(true)
 
         case .copiedOnly:
-            markAutoPasteFallback("Einfügen konnte nicht ausgelöst werden. Text bleibt kopiert.")
+            markAutoPasteFallback(
+                "Einfügen konnte nicht ausgelöst werden. Text bleibt kopiert.",
+                completion: completion
+            )
             menuBarStatus = .error(activeWorkflow?.type)
 
         case .failedToCopy:
-            markAutoPasteFallback("Nicht automatisch eingefügt. Text konnte nicht in die Zwischenablage kopiert werden.")
+            markAutoPasteFallback(
+                "Nicht automatisch eingefügt. Text konnte nicht in die Zwischenablage kopiert werden.",
+                completion: completion
+            )
             menuBarStatus = .error(activeWorkflow?.type)
         }
     }
 
-    private func markAutoPasteFallback(_ message: String) {
+    private func markAutoPasteFallback(_ message: String, completion: ((Bool) -> Void)? = nil) {
         autoPasteSucceeded = false
         autoPasteStatusText = message
         autoPasteStatusIsVisible = true
         Self.autoPasteLogger.error("\(message, privacy: .public)")
+        completion?(false)
     }
 
     private func captureCurrentFrontmostApp() -> PasteTarget? {

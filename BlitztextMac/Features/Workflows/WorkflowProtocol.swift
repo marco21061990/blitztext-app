@@ -438,6 +438,7 @@ struct AppSettings: Codable, Equatable {
     var hasAutoSelectedFastLocalModel: Bool = false
     var shortcutBindings: [String: ShortcutBinding] = ShortcutConfiguration.defaultBindings
     var shortcutConfigurationVersion: Int = ShortcutConfiguration.currentVersion
+    var pauseMediaDuringDictation: Bool = true
 
     init(
         hotkeyMode: HotkeyMode = .hold,
@@ -445,7 +446,8 @@ struct AppSettings: Codable, Equatable {
         secureLocalModeEnabled: Bool = false,
         selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName,
         hasAutoSelectedFastLocalModel: Bool = false,
-        shortcutBindings: [String: ShortcutBinding] = ShortcutConfiguration.defaultBindings
+        shortcutBindings: [String: ShortcutBinding] = ShortcutConfiguration.defaultBindings,
+        pauseMediaDuringDictation: Bool = true
     ) {
         self.hotkeyMode = hotkeyMode
         self.hasSeenOnboarding = hasSeenOnboarding
@@ -454,6 +456,7 @@ struct AppSettings: Codable, Equatable {
         self.hasAutoSelectedFastLocalModel = hasAutoSelectedFastLocalModel
         self.shortcutBindings = ShortcutConfiguration.migratedBindings(shortcutBindings)
         self.shortcutConfigurationVersion = ShortcutConfiguration.currentVersion
+        self.pauseMediaDuringDictation = pauseMediaDuringDictation
     }
 
     enum CodingKeys: String, CodingKey {
@@ -465,6 +468,7 @@ struct AppSettings: Codable, Equatable {
         case shortcutBindings
         case shortcuts
         case shortcutConfigurationVersion
+        case pauseMediaDuringDictation
     }
 
     private struct DynamicCodingKey: CodingKey {
@@ -505,6 +509,10 @@ struct AppSettings: Codable, Equatable {
         // Unknown future versions still get the current safe defaults/migration
         // path instead of making the complete settings file undecodable.
         shortcutConfigurationVersion = ShortcutConfiguration.currentVersion
+        pauseMediaDuringDictation = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .pauseMediaDuringDictation
+        ) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -516,6 +524,7 @@ struct AppSettings: Codable, Equatable {
         try container.encode(hasAutoSelectedFastLocalModel, forKey: .hasAutoSelectedFastLocalModel)
         try container.encode(shortcutBindings, forKey: .shortcutBindings)
         try container.encode(ShortcutConfiguration.currentVersion, forKey: .shortcutConfigurationVersion)
+        try container.encode(pauseMediaDuringDictation, forKey: .pauseMediaDuringDictation)
     }
 
     private static func decodeShortcutBindings<C: CodingKey>(

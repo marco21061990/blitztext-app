@@ -780,6 +780,45 @@ struct CustomizeSettingsView: View {
                 }
             }
 
+            // MARK: Medien während Diktat
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Medien während Diktat")
+
+                Toggle("Wiedergabe automatisch pausieren", isOn: $appState.appSettings.pauseMediaDuringDictation)
+                    .toggleStyle(.switch)
+
+                Text("Blitztext pausiert vor der Aufnahme nur eine aktive Wiedergabe in Spotify oder YouTube in Chrome und stellt ausschließlich diese Pause wieder her.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text("YouTube in Chrome benötigt Bedienungshilfen. Spotify kann beim ersten Zugriff eine Automation-Freigabe verlangen. Fehlt eine Freigabe, läuft die Aufnahme trotzdem weiter.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if appState.appSettings.pauseMediaDuringDictation {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !appState.accessibilityPermissionGranted {
+                            Button("Bedienungshilfen öffnen") {
+                                appState.requestAccessibilityPermission()
+                            }
+                            .buttonStyle(SubtleButtonStyle())
+                        }
+
+                        Button("Spotify-Automation öffnen") {
+                            AccessibilityPermissionService.openAutomationSystemSettings()
+                        }
+                        .buttonStyle(SubtleButtonStyle())
+                    }
+                }
+            }
+
             // MARK: Tastenkuerzel
             VStack(alignment: .leading, spacing: 10) {
                 SectionLabel(text: "Tastenk\u{00FC}rzel")

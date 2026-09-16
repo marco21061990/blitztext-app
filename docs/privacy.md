@@ -22,6 +22,20 @@ The app stores:
 - temporary audio files while a transcription is being processed; the app attempts to delete each recording when the workflow ends or is cancelled
 - a local API usage log (`api-usage.json`) with usage metadata only: model, billed audio seconds or input/output tokens, and a timestamp for each successful OpenAI call. It never stores audio, transcripts, prompt text, completions, or your API key.
 
+## Media Playback During Dictation
+
+When enabled, the app inspects supported playback locally before each recording.
+The first release supports Spotify through macOS Apple Events and YouTube in
+Chrome through the visible Accessibility player controls. It pauses only a
+source that was observed playing and resumes only after Blitztext confirmed its
+own pause. Already-paused, unknown, unsupported, or changed sources are left
+alone. Volume and mute are never changed.
+
+No media state, track metadata, browser content, or playback history is
+persisted or sent to a Blitztext service. If macOS permission is missing or a
+control operation cannot be confirmed, recording continues and the feature
+fails open. The setting can be disabled under **Medien während Diktat**.
+
 ## API Usage And Cost Estimate
 
 The settings section **API-Verbrauch** shows the last successful OpenAI action plus today's and this calendar month's totals with an estimated cost in USD. These are local estimates computed on your Mac from recorded usage and a built-in pricing snapshot. They cover only Blitztext calls recorded from this feature onward, not earlier usage, and local (on-device) transcription is not counted because it does not call OpenAI. The estimate can drift from OpenAI's actual billing; your OpenAI account and its usage dashboard remain authoritative.

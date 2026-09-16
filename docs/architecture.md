@@ -11,6 +11,7 @@ inside the macOS app process.
 User hotkey or menu click
   -> AppDelegate
   -> AppState.startWorkflow
+  -> MediaPlaybackCoordinator (bounded, state-aware pause)
   -> Workflow.start
   -> AudioRecorder writes temp m4a
   -> Workflow.stop
@@ -48,9 +49,34 @@ Primary responsibilities:
 - menu bar status transitions
 - capture of the previous frontmost app for auto-paste
 - temporary clipboard writes, paste command dispatch, and clipboard restore
+- media playback preparation and per-recording pause ownership
+- central stop, cancel, retry, paste-completion, and cleanup lifecycle routing
 
 This file is large and security-sensitive. Avoid mixing unrelated refactors with
 behavior changes here.
+
+## Media Playback
+
+`BlitztextMac/Services/MediaPlaybackCoordinator.swift` owns the local media
+control boundary. `SpotifyMediaPlaybackAdapter` reads and controls Spotify
+through Apple Events. `ChromeYouTubeMediaPlaybackAdapter` traverses the focused
+Chrome window's Accessibility tree, locates a YouTube `movie_player`, and acts
+on explicit `Pause` or `Play` buttons. Both adapters fail closed for unknown or
+ambiguous state.
+
+`MediaPlaybackSessionStateMachine` is the pure ownership layer. A session is
+created only for an initially playing source and only becomes restorable after
+the adapter confirms that Blitztext caused the pause. It records source
+identity, external changes, and one-time restoration. Polling during processing
+detects a user or external playback change; a changed source, unknown state, or
+already-playing source prevents restoration.
+
+`AppState` starts a workflow only after the coordinator's preparation callback
+or its 500 ms fail-open deadline. All recording workflows share this path.
+Recording stop is distinct from cancellation, successful paste completion, and
+terminal failure so media restoration happens at the correct lifecycle point.
+If a player call completes with a confirmed pause after the deadline, the
+coordinator restores it immediately and does not attach it to the recording.
 
 ## Workflows
 
@@ -143,3 +169,7 @@ Keep workflows independent from paste behavior. Keep external provider calls
 inside services. Keep user-facing privacy claims synchronized with actual code.
 When a change affects data flow, update `docs/privacy.md` and
 `docs/runtime-data.md` in the same change.
+
+Do not call concrete workflow `start()`, `stop()`, or `reset()` methods from
+views or the app delegate. Route those actions through `AppState` so media
+ownership remains synchronized.

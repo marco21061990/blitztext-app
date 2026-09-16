@@ -136,6 +136,26 @@ send Cmd+V through System Events, then falls back to a synthetic Cmd+V through
 `AXSelectedText` insertion remains available in the service code but is no
 longer the default auto-paste path.
 
+## Media Playback Coordination
+
+`MediaPlaybackCoordinator` keeps media-control state in memory only. For each
+recording or retry it selects at most one supported active source, reads its
+current state, and uses an explicit pause or play control only when the
+preconditions are confirmed. Spotify is accessed with Apple Events. YouTube in
+Chrome is accessed through the focused Chrome window's Accessibility tree and
+its visible `movie_player` controls. The coordinator never changes volume or
+mute state, never starts a source that was not initially playing, and does not
+persist track, URL, browser, or playback data.
+
+Preparation runs off the main thread with a 500 ms budget. A timeout,
+permission denial, ambiguous source, unknown state, failed pause confirmation,
+or changed player is fail-open: the recording still starts and no later Play
+command is sent for that session. If an in-flight control call returns a
+confirmed pause after the budget, the coordinator restores that side effect
+immediately instead of attaching it to the recording. Runtime diagnostics
+contain provider/state decisions only, not track names, URLs, transcripts, or
+audio.
+
 ## macOS Permissions
 
 ### Microphone
@@ -152,6 +172,11 @@ Accessibility, the app can still copy generated text to the clipboard.
 May be requested by macOS when Blitztext sends the paste command through System
 Events. Without it, Blitztext falls back to the CGEvent and Accessibility paste
 paths.
+
+Spotify media control uses the same macOS Automation permission surface. Chrome
+media control uses the existing Accessibility permission. The app is not
+sandboxed, so this feature adds no new entitlement. If either permission is
+denied, media control is skipped and dictation continues.
 
 ### Full Disk Access
 

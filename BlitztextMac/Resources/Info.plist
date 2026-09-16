@@ -21,7 +21,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Blitztext benötigt Mikrofon-Zugriff für die Sprach-Transkription.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Blitztext nutzt System Events, um den erzeugten Text per Einfügen-Befehl in die zuvor aktive App einzusetzen.</string>
+	<string>Blitztext nutzt Apple Events für das Einfügen in die zuvor aktive App und für die zustandsbewusste Steuerung unterstützter Medienwiedergabe in Spotify.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>CFBundleIconFile</key>
