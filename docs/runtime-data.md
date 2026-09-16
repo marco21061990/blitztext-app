@@ -9,6 +9,7 @@ Blitztext uses these user-local paths:
 
 ```text
 ~/Library/Application Support/Blitztext/settings.json
+~/Library/Application Support/Blitztext/api-usage.json
 ~/Library/Application Support/Blitztext/models/
 ~/Library/Application Support/Blitztext/models/whisperkit/
 ~/Library/Application Support/Blitztext/models/downloads/
@@ -18,6 +19,37 @@ Blitztext uses these user-local paths:
 ```
 
 `AppSupportPaths.swift` is the source of truth for these paths.
+
+## Local API Usage Log
+
+`OpenAIUsageStore` records one entry per successful, billed OpenAI call to:
+
+```text
+~/Library/Application Support/Blitztext/api-usage.json
+```
+
+Each record stores only usage metadata:
+
+- a UUID and local timestamp
+- kind (`transcription` or `rewrite`)
+- exact model string (`whisper-1`, `gpt-4o-mini`, `gpt-4o`)
+- billed audio seconds (transcription) or input/output tokens (rewrite)
+
+It never stores audio, transcript text, prompt text, completions, or API keys.
+Failed API responses and local WhisperKit transcription are not recorded. A
+successfully returned OpenAI call is recorded because it may be billable even if
+the workflow later discards its output or is cancelled after the response
+arrives. The file is capped at the most recent 10,000 records. A missing or
+corrupt file is treated as an empty log and overwritten on the next successful
+call.
+
+The settings section `API-Verbrauch` reads this log to show the last action plus
+local calendar day and month totals with an estimated USD cost. Cost is
+recomputed from the recorded model and raw units against a pricing snapshot in
+`OpenAIPricing` (`OpenAIUsage.swift`, snapshot date and official source URLs
+annotated in code). All figures are local estimates covering only Blitztext
+calls recorded from this feature onward; the OpenAI account billing is
+authoritative.
 
 ## Settings Persistence
 
@@ -142,13 +174,18 @@ Implemented in `TranscriptionService`.
 ```text
 POST https://api.openai.com/v1/audio/transcriptions
 model: whisper-1
-response_format: text
+response_format: verbose_json
 ```
 
 Payload includes the recorded audio file. It can also include:
 
 - custom terms as the `prompt` field when recording duration is at least 0.9 s
 - language code from `TranscriptionSettings.language`
+
+The response is requested as `verbose_json` so the app can read the transcript
+text and the billed audio `duration`. Only the text and duration are used; the
+duration is recorded as usage metadata (see **Local API Usage Log**). No audio or
+transcript text is persisted.
 
 ### OpenAI Text Rewriting
 
@@ -163,6 +200,10 @@ Payload includes system prompt and user text. The app uses:
 
 - `gpt-4o-mini` for text improvement and emoji insertion
 - `gpt-4o` for calmer-message rewriting
+
+On a successful response, the returned `usage` object (prompt and completion
+tokens) is recorded as usage metadata (see **Local API Usage Log**). Prompt text
+and completions are not persisted.
 
 ### Hugging Face Model Download
 

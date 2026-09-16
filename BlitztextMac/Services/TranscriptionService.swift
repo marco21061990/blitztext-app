@@ -78,9 +78,11 @@ enum TranscriptionService {
             body.append(remoteModel)
             body.append("\r\n")
 
+            // verbose_json returns the transcript plus the billed audio duration,
+            // which we record as usage metadata.
             body.append("--\(boundary)\r\n")
             body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
-            body.append("text")
+            body.append("verbose_json")
             body.append("\r\n")
 
             if !customTerms.isEmpty {
@@ -111,11 +113,19 @@ enum TranscriptionService {
                 throw TranscriptionError.apiError(openAIErrorMessage(from: data) ?? "Status \(httpResponse.statusCode)")
             }
 
-            guard let text = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else {
+            guard let decoded = try? JSONDecoder().decode(WhisperVerboseTranscription.self, from: data) else {
                 throw TranscriptionError.apiError("Transkription fehlgeschlagen")
             }
+
+            let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw TranscriptionError.apiError("Transkription fehlgeschlagen")
+            }
+
+            await OpenAIUsageRecorder.recordTranscription(
+                model: remoteModel,
+                audioSeconds: decoded.duration
+            )
 
             return text
         }.value

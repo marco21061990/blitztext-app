@@ -20,6 +20,11 @@ The app stores:
 - workflow settings in local app support storage
 - optional WhisperKit/CoreML model folders in local app support storage
 - temporary audio files while a transcription is being processed; the app attempts to delete each recording when the workflow ends or is cancelled
+- a local API usage log (`api-usage.json`) with usage metadata only: model, billed audio seconds or input/output tokens, and a timestamp for each successful OpenAI call. It never stores audio, transcripts, prompt text, completions, or your API key.
+
+## API Usage And Cost Estimate
+
+The settings section **API-Verbrauch** shows the last successful OpenAI action plus today's and this calendar month's totals with an estimated cost in USD. These are local estimates computed on your Mac from recorded usage and a built-in pricing snapshot. They cover only Blitztext calls recorded from this feature onward, not earlier usage, and local (on-device) transcription is not counted because it does not call OpenAI. The estimate can drift from OpenAI's actual billing; your OpenAI account and its usage dashboard remain authoritative.
 
 Workflow output may also be placed on your clipboard so it can be pasted into another app. Auto-paste marks the clipboard entry as concealed for compatible clipboard managers and attempts to restore the previous clipboard contents after a paste command is sent. If automatic paste cannot be triggered, the generated text intentionally remains on the clipboard as a fallback. Clipboard managers, macOS, or other apps may still observe clipboard contents while they are present.
 

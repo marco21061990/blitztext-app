@@ -46,6 +46,7 @@ private struct OpenAIChatResponse: Decodable {
     }
 
     let choices: [Choice]?
+    let usage: OpenAIChatUsage?
 }
 
 private struct OpenAIErrorResponse: Decodable {
@@ -160,6 +161,12 @@ enum LLMService {
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LLMError.noContent
         }
+
+        await OpenAIUsageRecorder.recordRewrite(
+            model: model.rawValue,
+            inputTokens: result.usage?.prompt_tokens,
+            outputTokens: result.usage?.completion_tokens
+        )
 
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }

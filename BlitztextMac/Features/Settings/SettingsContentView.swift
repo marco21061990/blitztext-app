@@ -53,6 +53,123 @@ private struct SectionLabel: View {
     }
 }
 
+// MARK: - API Usage Section (local estimate)
+
+/// Compact, read-only view of locally recorded OpenAI usage and estimated cost.
+/// Reads the shared `OpenAIUsageStore`, so it updates live when new usage is
+/// recorded while settings are open. All figures are local estimates.
+struct APIUsageSection: View {
+    private var store: OpenAIUsageStore { OpenAIUsageStore.shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "API-Verbrauch")
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("Zuletzt")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 88, alignment: .leading)
+                Text(lastActionText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            usageRow(label: "Heute", totals: store.todayTotals)
+            usageRow(label: "Dieser Monat", totals: store.monthTotals)
+
+            Text("Lokale Schätzung in USD. Erfasst nur Blitztext-Aufrufe ab Aktivierung dieser Funktion, ohne frühere Nutzung. Maßgeblich ist deine OpenAI-Abrechnung.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link("OpenAI Usage Dashboard öffnen", destination: OpenAIPricing.usageDashboardURL)
+                .font(.system(size: 10.5, weight: .medium))
+        }
+    }
+
+    private func usageRow(label: String, totals: OpenAIUsageTotals) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 88, alignment: .leading)
+            Text(summaryText(for: totals))
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Formatting
+
+    private var lastActionText: String {
+        guard let record = store.lastRecord else {
+            return "Noch keine Aufrufe erfasst."
+        }
+        let kind = record.kind == .transcription ? "Transkription" : "Textbearbeitung"
+        let relative = Self.relativeFormatter.localizedString(for: record.timestamp, relativeTo: Date())
+        return "\(kind) · \(record.model) · \(relative)"
+    }
+
+    private func summaryText(for totals: OpenAIUsageTotals) -> String {
+        guard !totals.isEmpty else { return "Keine Aufrufe." }
+
+        var parts: [String] = ["\(totals.callCount)×"]
+        if totals.audioSeconds > 0 {
+            parts.append(Self.audioText(seconds: totals.audioSeconds))
+        }
+        if totals.inputTokens > 0 || totals.outputTokens > 0 {
+            parts.append("\(Self.decimal(totals.inputTokens))/\(Self.decimal(totals.outputTokens)) Tokens")
+        }
+        if totals.hasCostEstimate {
+            parts.append("≈ \(Self.usdText(totals.estimatedCostUSD)) USD")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func audioText(seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        if total >= 60 {
+            return "\(total / 60) min \(total % 60) s"
+        }
+        return "\(total) s"
+    }
+
+    private static func decimal(_ value: Int) -> String {
+        decimalFormatter.string(from: NSNumber(value: value)) ?? "\(value)"
+    }
+
+    private static func usdText(_ value: Double) -> String {
+        usdFormatter.string(from: NSNumber(value: value)) ?? String(format: "%.4f", value)
+    }
+
+    private static let decimalFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    private static let usdFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 4
+        return formatter
+    }()
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+}
+
 // MARK: - Access Settings (Tab 1: Zugang)
 
 struct AccessSettingsView: View {
@@ -182,6 +299,8 @@ struct AccessSettingsView: View {
                     }
                 }
             }
+
+            APIUsageSection()
 
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Installation")
