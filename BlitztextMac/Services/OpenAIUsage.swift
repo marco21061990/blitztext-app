@@ -46,7 +46,7 @@ struct OpenAIUsageRecord: Codable, Sendable, Identifiable, Equatable {
 
 /// Centralized OpenAI pricing snapshot for local cost estimates.
 ///
-/// Pricing snapshot captured 2026-07-14. These are estimates only; the OpenAI
+/// Pricing snapshot captured 2026-09-16. These are estimates only; the OpenAI
 /// account billing is authoritative. Update the constants and `snapshotDate`
 /// together when OpenAI changes prices.
 ///
@@ -56,7 +56,7 @@ struct OpenAIUsageRecord: Codable, Sendable, Identifiable, Equatable {
 ///   gpt-4o:      https://developers.openai.com/api/docs/models/gpt-4o
 ///   Usage dashboard: https://platform.openai.com/usage
 enum OpenAIPricing {
-    static let snapshotDate = "2026-07-14"
+    static let snapshotDate = "2026-09-16"
     static let usageDashboardURL = URL(string: "https://platform.openai.com/usage")!
 
     // whisper-1: USD 0.006 per audio minute.

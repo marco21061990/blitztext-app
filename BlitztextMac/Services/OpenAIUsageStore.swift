@@ -35,6 +35,12 @@ final class OpenAIUsageStore {
         save()
     }
 
+    /// Removes the in-memory usage history and its persisted file.
+    func clear() {
+        records.removeAll(keepingCapacity: false)
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
     var lastRecord: OpenAIUsageRecord? {
         records.max { $0.timestamp < $1.timestamp }
     }

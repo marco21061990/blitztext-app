@@ -48,5 +48,25 @@ jobs:
             brew install xcodegen
           fi
 
+      - name: Run standalone regression tests
+        run: |
+          swiftc -o /tmp/blitztext-usage-test \
+            Tests/OpenAIUsageTests.swift \
+            BlitztextMac/Services/OpenAIUsage.swift \
+            BlitztextMac/Services/OpenAIUsageStore.swift \
+            BlitztextMac/Services/AppSupportPaths.swift
+          /tmp/blitztext-usage-test
+
+          swiftc -o /tmp/blitztext-overlay-test \
+            Tests/RecordingOverlayStateTests.swift \
+            BlitztextMac/App/RecordingOverlayState.swift
+          /tmp/blitztext-overlay-test
+
+          swiftc -o /tmp/blitztext-keyvalidation-test \
+            Tests/OpenAIKeyValidationServiceTests.swift \
+            BlitztextMac/Services/OpenAIKeyValidationService.swift \
+            BlitztextMac/Services/KeychainService.swift
+          /tmp/blitztext-keyvalidation-test
+
       - name: Build
         run: ./build.sh --debug

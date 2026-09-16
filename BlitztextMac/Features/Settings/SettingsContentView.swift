@@ -648,6 +648,13 @@ struct AccessSettingsView: View {
         cleanupStatusText = nil
         cleanupErrorText = nil
 
+        if deleteLocalDataOnCleanup {
+            // The filesystem cleanup removes Application Support, but the
+            // process-local store would otherwise retain and later rewrite its
+            // records after cleanup.
+            OpenAIUsageStore.shared.clear()
+        }
+
         let report = deleteLocalDataOnCleanup
             ? BlitztextCleanupService.cleanupUserData()
             : BlitztextCleanupService.removeLaunchAtLoginRegistration()

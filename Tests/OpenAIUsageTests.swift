@@ -114,7 +114,7 @@ struct OpenAIUsageTests {
     @MainActor
     private static func assertStorePersistenceAndCorruptFileRecovery() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("blitztext-usage-tests-(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("blitztext-usage-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -133,6 +133,14 @@ struct OpenAIUsageTests {
         let reloaded = OpenAIUsageStore(fileURL: fileURL)
         guard reloaded.records == [record] else {
             throw TestFailure("Store persistence round-trip mismatch")
+        }
+
+        reloaded.clear()
+        guard reloaded.records.isEmpty else {
+            throw TestFailure("Cleared usage store should be empty")
+        }
+        guard !FileManager.default.fileExists(atPath: fileURL.path) else {
+            throw TestFailure("Cleared usage store should remove its file")
         }
 
         try Data("not-json".utf8).write(to: fileURL, options: .atomic)

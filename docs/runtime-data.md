@@ -49,7 +49,8 @@ recomputed from the recorded model and raw units against a pricing snapshot in
 `OpenAIPricing` (`OpenAIUsage.swift`, snapshot date and official source URLs
 annotated in code). All figures are local estimates covering only Blitztext
 calls recorded from this feature onward; the OpenAI account billing is
-authoritative.
+authoritative. The full local-data cleanup also clears the in-memory store and
+removes this usage log from disk.
 
 ## Settings Persistence
 
