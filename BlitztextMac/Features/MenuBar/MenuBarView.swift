@@ -112,7 +112,9 @@ struct MenuBarView: View {
                         type: type,
                         enabled: enabled,
                         customName: appState.displayName(for: type),
-                        subtitle: appState.workflowSubtitle(for: type)
+                        subtitle: appState.workflowSubtitle(for: type),
+                        hotkeyLabel: appState.shortcutBinding(for: type).displayLabel,
+                        hotkeyEnabled: appState.shortcutBinding(for: type).isEnabled
                     ) {
                         appState.startWorkflow(type)
                     }

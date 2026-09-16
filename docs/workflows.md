@@ -46,7 +46,8 @@ implemented.
 
 ## Hotkeys
 
-`HotkeyService` maps modifier combinations to `WorkflowType`:
+`HotkeyService` reads the per-workflow configuration from `AppSettings` and
+monitors the shortcuts globally. The default configuration is:
 
 | Hotkey | Workflow |
 | --- | --- |
@@ -57,9 +58,25 @@ implemented.
 | `fn + Option` | Blitztext `$%&!` calmer-message rewrite |
 | `fn + Command` | Blitztext `:)` emoji text |
 
+All six rows, including local transcription, can be changed in **Einstellungen
+-> Anpassen**. A recorded shortcut uses the physical macOS key code plus
+modifier flags, so it continues to identify the same physical key after a
+keyboard-layout change. The captured label is retained for display when AppKit
+provides one.
+
+Allowed standard keys are letters, number-row digits, Space, and F1-F20, always
+with at least one workflow modifier. Modifier-only shortcuts remain supported
+and require at least two modifiers. Escape is reserved for cancellation; media
+keys and known macOS system combinations are rejected. A workflow can be
+disabled without losing its recorded assignment, using either the switch or
+the clear action, and each row or all rows can be reset to the defaults.
+App-specific shortcut collisions cannot be detected
+reliably by macOS event monitors and therefore are not claimed as preflight-safe.
+
 `HotkeyMode.hold` starts on modifier down and stops on release.
 `HotkeyMode.toggle` starts on modifier down and stops on the same workflow again
-or Escape.
+or Escape. For a shortcut with a standard key, the workflow starts on key down
+and releases on key up in hold mode. Autorepeat does not start a second workflow.
 
 ## Transcription Workflow
 
