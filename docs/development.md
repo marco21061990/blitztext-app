@@ -66,8 +66,35 @@ Usually `./build.sh --debug` is enough because it runs XcodeGen first.
 
 ## Tests
 
-There is currently no unit or UI test target. Minimum verification for code
-changes is:
+There is no unit or UI test target. A few focused, dependency-light checks live
+in `Tests/` as standalone `@main` executables. Compile a test together with the
+source files it exercises and run it:
+
+```bash
+swiftc -o /tmp/blitztext-usage-test \
+  Tests/OpenAIUsageTests.swift \
+  BlitztextMac/Services/OpenAIUsage.swift \
+  BlitztextMac/Services/OpenAIUsageStore.swift \
+  BlitztextMac/Services/AppSupportPaths.swift
+/tmp/blitztext-usage-test
+
+swiftc -o /tmp/blitztext-overlay-test \
+  Tests/RecordingOverlayStateTests.swift \
+  BlitztextMac/App/RecordingOverlayState.swift
+/tmp/blitztext-overlay-test
+
+swiftc -o /tmp/blitztext-keyvalidation-test \
+  Tests/OpenAIKeyValidationServiceTests.swift \
+  BlitztextMac/Services/OpenAIKeyValidationService.swift \
+  BlitztextMac/Services/KeychainService.swift
+/tmp/blitztext-keyvalidation-test
+```
+
+Each prints on success and exits non-zero on failure. `OpenAIUsageTests` covers
+cost calculation, calendar day/month aggregation, usage persistence round-trip,
+and API usage response decoding.
+
+Minimum verification for code changes is still:
 
 ```bash
 ./build.sh --debug

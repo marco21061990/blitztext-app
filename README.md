@@ -114,6 +114,8 @@ Local transcription:  Your Mac -> WhisperKit/CoreML on device
 
 The app stores your OpenAI API key in the user's macOS Keychain.
 
+The settings section **API-Verbrauch** shows the last successful OpenAI action plus today's and this month's usage with an estimated USD cost. These figures are local estimates recorded on your Mac from this feature onward and cover only Blitztext calls. Your OpenAI [usage dashboard](https://platform.openai.com/usage) remains authoritative for billing. See [docs/runtime-data.md](docs/runtime-data.md) for the local usage file.
+
 Read [docs/privacy.md](docs/privacy.md) before using the preview with sensitive content.
 
 ## Project Structure
