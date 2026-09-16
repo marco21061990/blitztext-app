@@ -88,11 +88,28 @@ swiftc -o /tmp/blitztext-keyvalidation-test \
   BlitztextMac/Services/OpenAIKeyValidationService.swift \
   BlitztextMac/Services/KeychainService.swift
 /tmp/blitztext-keyvalidation-test
+
+swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
+  -target arm64-apple-macosx14.0 \
+  -o /tmp/blitztext-media-session-test \
+  Tests/MediaPlaybackSessionTests.swift \
+  BlitztextMac/Services/MediaPlaybackSession.swift
+/tmp/blitztext-media-session-test
+
+swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
+  -target arm64-apple-macosx14.0 \
+  -o /tmp/blitztext-media-coordinator-test \
+  Tests/MediaPlaybackCoordinatorTests.swift \
+  BlitztextMac/Services/MediaPlaybackSession.swift \
+  BlitztextMac/Services/MediaPlaybackCoordinator.swift
+/tmp/blitztext-media-coordinator-test
 ```
 
 Each prints on success and exits non-zero on failure. `OpenAIUsageTests` covers
 cost calculation, calendar day/month aggregation, usage persistence round-trip,
-and API usage response decoding.
+and API usage response decoding. The media-session and coordinator tests cover
+pause ownership, restoration rules, fail-open behavior, and the preparation
+deadline without using a real player.
 
 Minimum verification for code changes is still:
 
@@ -125,8 +142,12 @@ For behavior changes, build and launch the app, then check the relevant path:
 7. Run the changed workflow by menu click and by hotkey when applicable.
 8. Confirm text is copied or pasted. If auto-paste fails, confirm the app shows
    a copied fallback message instead of claiming the text was inserted.
-9. Confirm temporary recordings are removed on best effort.
-10. Confirm errors are user-readable and do not expose secrets.
+9. With media playback enabled, verify a playing Spotify or YouTube-in-Chrome
+   source pauses before recording and resumes only after successful paste.
+10. Verify an already-paused, unsupported, permission-denied, changed, or
+    externally resumed source is left alone and that recording still starts.
+11. Confirm temporary recordings are removed on best effort.
+12. Confirm errors are user-readable and do not expose secrets.
 
 For local transcription changes, also test with a missing model and an installed
 model.

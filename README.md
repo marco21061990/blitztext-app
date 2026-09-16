@@ -15,6 +15,8 @@ This is a learning and experimentation project, not a polished product.
 - **Translate EN**: dictate in German and paste a close English translation for coding prompts.
 - **Blitztext $%&!**: turn frustrated speech into a calmer message.
 - **Blitztext :)**: add fitting emojis to dictated text.
+- **Media playback**: optionally pause active Spotify or YouTube playback in
+  Chrome while dictating, then restore only a pause owned by Blitztext.
 
 ## Important Preview Notes
 
@@ -23,6 +25,8 @@ This is a learning and experimentation project, not a polished product.
 - No hosted Blitztext backend is included or provided.
 - In online mode, audio and text are sent directly from the app to the OpenAI API.
 - Optional local transcription via WhisperKit/CoreML if you install a compatible model locally.
+- Media playback control is limited to Spotify and YouTube in Chrome, is
+  state-aware, and fails open when macOS cannot verify or control the source.
 - `./build.sh` creates a locally signed development app. No notarized release binary is provided.
 - Not production ready.
 - No warranty and no support guarantee.
@@ -95,12 +99,16 @@ For a slower, more explicit walkthrough, see [docs/setup.md](docs/setup.md).
 Blitztext asks for:
 
 - **Microphone**: to record your voice.
-- **Accessibility**: to paste the result back into the app you were using.
-- **Automation / System Events**: macOS may ask for this when Blitztext sends the paste command through System Events.
+- **Accessibility**: to paste the result back into the app you were using and
+  to control YouTube's visible player controls in Chrome.
+- **Automation / System Events**: macOS may ask for this when Blitztext sends
+  the paste command through System Events or reads and controls Spotify.
 
 If you do not grant Accessibility permission, you can still copy results manually.
 
 Full Disk Access is not required. If auto-paste does not work even though transcription succeeds, open **System Settings -> Privacy & Security -> Accessibility**, enable Blitztext there, restart Blitztext, and try again with the cursor focused in a text field. If macOS prompts for Automation access to System Events, allow it so Blitztext can send the paste command. If macOS shows multiple Blitztext entries, remove or disable the old ones and grant the permission to the app you just built or installed.
+
+For Spotify playback control, allow Blitztext under **System Settings -> Privacy & Security -> Automation** when macOS asks. YouTube in Chrome uses the Accessibility permission. If media control is unavailable, dictation continues and no playback is started automatically.
 
 ## Data Flow
 
@@ -110,7 +118,13 @@ The preview has no custom backend.
 Online transcription: Your Mac -> OpenAI Audio Transcriptions API
 Text rewriting:       Your Mac -> OpenAI Chat Completions API
 Local transcription:  Your Mac -> WhisperKit/CoreML on device
+Media playback:       Your Mac -> local Spotify/Chrome controls
 ```
+
+Media playback state is inspected and controlled locally. It does not send
+audio, track data, or browser data to a Blitztext service, and it adds no
+network destination. See [docs/media-playback-during-dictation.md](docs/media-playback-during-dictation.md)
+for the exact safety and scope rules.
 
 The app stores your OpenAI API key in the user's macOS Keychain.
 

@@ -69,6 +69,16 @@ For automatic paste into the previous app, grant Accessibility permission in mac
 
 Blitztext does not need Full Disk Access. Auto-paste uses the Accessibility permission because the app activates the previous app and sends paste commands after putting the result on the clipboard. macOS may also prompt for Automation access to System Events the first time Blitztext uses the System Events paste path.
 
+If **Wiedergabe automatisch pausieren** is enabled, YouTube in Chrome uses the
+same Accessibility permission. Spotify may prompt for a separate Automation
+permission when Blitztext reads or controls its player. If either permission
+is missing, dictation still starts and media control is skipped. The setting is
+available under **Medien während Diktat**.
+
+The Spotify permission can also be opened from the **Spotify-Automation öffnen**
+button in that settings section or at **System Settings -> Privacy & Security ->
+Automation**.
+
 macOS ties Accessibility permissions to the app's code identity. Local builds
 prefer an Apple Development signature to keep that identity stable. If the
 signature changes after a rebuild, remove the old Blitztext entry under
@@ -81,6 +91,7 @@ Accessibility and grant the permission again to the app in its final location.
 - If online transcription fails immediately, check whether the API key is present and valid.
 - If secure local mode is disabled, check whether a WhisperKit model is installed in the expected folder.
 - If transcription works but paste does not, this is not an OpenAI billing issue. Check **Privacy & Security -> Accessibility**, allow Automation access to System Events if macOS prompts for it, restart Blitztext after changing permissions, and make sure the cursor is focused in a text field before starting the workflow.
+- If media is not paused, check **Medien während Diktat**, allow Accessibility for Blitztext and Automation for Spotify when macOS asks, and confirm that the supported player was actively playing. Already-paused, ambiguous, unsupported, or permission-blocked media is intentionally left alone.
 - If macOS shows multiple Blitztext entries under Accessibility, remove or disable stale entries, run the app from the final location (`/Applications` if you used `./build.sh --install`), then grant the permission again. Restart Blitztext after changing this setting.
 - If the target app blocks paste commands or the target app was not detected, the result stays on the clipboard so you can press Cmd+V manually.
 - If audio is missing, check Microphone permission and macOS input settings.

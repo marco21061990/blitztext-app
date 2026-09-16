@@ -98,6 +98,13 @@ struct MenuBarView: View {
                     .padding(.bottom, 6)
             }
 
+            if appState.appSettings.pauseMediaDuringDictation,
+               appState.accessibilityPermissionGranted {
+                mediaPlaybackPermissionHintBanner
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+            }
+
             if appState.autoPasteStatusIsVisible, let statusText = appState.autoPasteStatusText {
                 autoPasteStatusBanner(statusText: statusText, pasted: appState.autoPasteSucceeded)
                     .padding(.horizontal, 16)
@@ -275,11 +282,11 @@ struct MenuBarView: View {
                 .frame(width: 18, height: 18)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("Einfügen braucht Bedienungshilfen.")
+                Text(accessibilityHintTitle)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                Text("Nach Updates kann macOS die Freigabe neu verlangen.")
+                Text(accessibilityHintText)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -301,6 +308,55 @@ struct MenuBarView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.orange.opacity(0.12), lineWidth: 0.5)
+        )
+    }
+
+    private var accessibilityHintTitle: String {
+        appState.appSettings.pauseMediaDuringDictation
+            ? "Einfügen und YouTube-Steuerung brauchen Bedienungshilfen."
+            : "Einfügen braucht Bedienungshilfen."
+    }
+
+    private var accessibilityHintText: String {
+        appState.appSettings.pauseMediaDuringDictation
+            ? "Für YouTube in Chrome wird die Wiedergabe über diese Freigabe gesteuert. Spotify kann zusätzlich eine Automation-Freigabe anfordern."
+            : "Nach Updates kann macOS die Freigabe neu verlangen."
+    }
+
+    private var mediaPlaybackPermissionHintBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Mediensteuerung: Freigaben prüfen")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Text("YouTube in Chrome nutzt Bedienungshilfen, Spotify kann Automation benötigen. Fehlt eine Freigabe, läuft die Diktat-Aufnahme trotzdem weiter.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Freigaben") {
+                AccessibilityPermissionService.openAutomationSystemSettings()
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .buttonStyle(SubtleButtonStyle())
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
         )
     }
 
@@ -716,7 +772,7 @@ struct TranscriptionActiveView: View {
             switch workflow.phase {
             case .idle, .running:
                 if workflow.isRecording {
-                    recordingView(onStop: { workflow.stop() })
+                    recordingView(onStop: { appState.stopCurrentWorkflow() })
                 } else {
                     processingView(message: "Wird transkribiert \u{2026}")
                 }
@@ -730,8 +786,7 @@ struct TranscriptionActiveView: View {
 
             case .error(let msg):
                 errorView(message: msg) {
-                    workflow.reset()
-                    workflow.start()
+                    appState.retryCurrentWorkflow()
                 }
             }
         }
@@ -781,7 +836,7 @@ struct TextImproverActiveView: View {
             switch workflow.phase {
             case .idle, .running:
                 if workflow.isRecording {
-                    recordingView(onStop: { workflow.stop() })
+                    recordingView(onStop: { appState.stopCurrentWorkflow() })
                 } else {
                     VStack(spacing: 12) {
                         Spacer().frame(height: 24)
@@ -808,8 +863,7 @@ struct TextImproverActiveView: View {
 
             case .error(let msg):
                 errorView(message: msg) {
-                    workflow.reset()
-                    workflow.start()
+                    appState.retryCurrentWorkflow()
                 }
             }
         }
@@ -859,7 +913,7 @@ struct TranslateENActiveView: View {
             switch workflow.phase {
             case .idle, .running:
                 if workflow.isRecording {
-                    recordingView(onStop: { workflow.stop() })
+                    recordingView(onStop: { appState.stopCurrentWorkflow() })
                 } else {
                     VStack(spacing: 12) {
                         Spacer().frame(height: 24)
@@ -886,8 +940,7 @@ struct TranslateENActiveView: View {
 
             case .error(let msg):
                 errorView(message: msg) {
-                    workflow.reset()
-                    workflow.start()
+                    appState.retryCurrentWorkflow()
                 }
             }
         }
@@ -936,7 +989,7 @@ struct DampfAblassenActiveView: View {
             switch workflow.phase {
             case .idle, .running:
                 if workflow.isRecording {
-                    recordingView(onStop: { workflow.stop() })
+                    recordingView(onStop: { appState.stopCurrentWorkflow() })
                 } else {
                     VStack(spacing: 12) {
                         Spacer().frame(height: 24)
@@ -963,8 +1016,7 @@ struct DampfAblassenActiveView: View {
 
             case .error(let msg):
                 errorView(message: msg) {
-                    workflow.reset()
-                    workflow.start()
+                    appState.retryCurrentWorkflow()
                 }
             }
         }
@@ -1014,7 +1066,7 @@ struct EmojiTextActiveView: View {
             switch workflow.phase {
             case .idle, .running:
                 if workflow.isRecording {
-                    recordingView(onStop: { workflow.stop() })
+                    recordingView(onStop: { appState.stopCurrentWorkflow() })
                 } else {
                     VStack(spacing: 12) {
                         Spacer().frame(height: 24)
@@ -1041,8 +1093,7 @@ struct EmojiTextActiveView: View {
 
             case .error(let msg):
                 errorView(message: msg) {
-                    workflow.reset()
-                    workflow.start()
+                    appState.retryCurrentWorkflow()
                 }
             }
         }

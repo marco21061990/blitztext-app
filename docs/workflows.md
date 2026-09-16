@@ -28,6 +28,13 @@ Every workflow provides:
 `AppState.configureWorkflowHandlers(_:)` subscribes to output and phase changes.
 Workflows should not own menu bar status or paste behavior.
 
+Before `Workflow.start()` is called, `AppState` gives
+`MediaPlaybackCoordinator` up to 500 ms to inspect and explicitly pause one
+supported active source. The setting **Wiedergabe automatisch pausieren** is
+enabled by default and applies to every recording workflow, including local
+transcription. If preparation times out or cannot prove ownership, the
+workflow starts without media control.
+
 ## Workflow Availability
 
 `AppState.isWorkflowAvailable(_:)` controls whether a workflow can run.
@@ -60,6 +67,14 @@ implemented.
 `HotkeyMode.hold` starts on modifier down and stops on release.
 `HotkeyMode.toggle` starts on modifier down and stops on the same workflow again
 or Escape.
+
+Menu stops, hold-mode key-up, toggle stops, Escape, retries, and delayed cleanup
+all call AppState lifecycle methods. A recording stop hands the audio to the
+workflow for processing; cancellation resets it. Media restoration waits for
+successful paste or a terminal failure/cancellation and is never owned by an
+individual workflow. `AppState.isPreparingWorkflow` covers the short media
+preparation window so a hold key-up or toggle stop cannot accidentally start a
+recording after the user has released the hotkey.
 
 ## Transcription Workflow
 

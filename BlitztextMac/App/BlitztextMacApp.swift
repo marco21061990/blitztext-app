@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        appState.cancelCurrentWorkflow()
         recordingOverlayController.hide()
     }
 
@@ -97,8 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             // Toggle mode: if already recording same workflow, stop it
             if let active = appState.activeWorkflow,
                active.type == type,
-               active.phase.isActive {
-                active.stop()
+               (active.phase.isActive || appState.isPreparingWorkflow) {
+                appState.stopCurrentWorkflow()
             } else {
                 appState.prepareForPopoverPresentation()
                 appState.startWorkflow(type, source: .manual)
@@ -117,13 +118,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
            active.type == type {
             // Only stop if currently recording (running phase)
             if case .running = active.phase {
-                active.stop()
+                appState.stopCurrentWorkflow()
+            } else if appState.isPreparingWorkflow {
+                appState.cancelCurrentWorkflow()
             }
         }
     }
 
     private func handleHotkeyCancel() {
-        appState.activeWorkflow?.stop()
+        appState.cancelCurrentWorkflow()
     }
 
     @objc private func togglePopover() {

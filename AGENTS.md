@@ -58,6 +58,8 @@ BlitztextMac/
     LLMService.swift
     LaunchAtLoginService.swift
     LocalTranscriptionService.swift
+    MediaPlaybackCoordinator.swift
+    MediaPlaybackSession.swift
     OpenAIKeyValidationService.swift
     TranscriptionQualityService.swift
     TranscriptionService.swift
@@ -114,6 +116,8 @@ runs `./build.sh --debug`.
   `gpt-4o-mini` or `gpt-4o`.
 - `OpenAIKeyValidationService` checks the stored OpenAI API key against
   OpenAI's models endpoint when the user explicitly clicks the test button.
+- `MediaPlaybackCoordinator` controls only confirmed Spotify or Chrome YouTube
+  playback with a bounded, fail-open, per-recording session.
 - `AppState` restores the target app and delegates insertion to
   `AutoPasteService`. It first tries to insert into the focused Accessibility
   text element, then falls back to the pasteboard plus the target app's
