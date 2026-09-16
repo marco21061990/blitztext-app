@@ -105,6 +105,7 @@ final class AppState {
         refreshAccessibilityPermission()
         autoSelectFastLocalModelIfNeeded()
         prewarmLocalTranscriptionIfNeeded()
+        _ = hotkeyService.updateConfiguration(appSettings.shortcutBindings)
     }
 
     // MARK: - Custom Display Names
@@ -171,6 +172,65 @@ final class AppState {
         selectedLocalModelIsInstalled
             ? "\(LocalTranscriptionModel.displayName(for: selectedLocalModelName)) ist installiert"
             : "\(LocalTranscriptionModel.displayName(for: selectedLocalModelName)) installieren"
+    }
+
+    // MARK: - Shortcut Configuration
+
+    func shortcutBinding(for type: WorkflowType) -> ShortcutBinding {
+        appSettings.shortcutBindings[type.rawValue]
+            ?? ShortcutConfiguration.defaultBinding(for: type)
+    }
+
+    @discardableResult
+    func updateShortcut(for type: WorkflowType, binding: ShortcutBinding) -> ShortcutUpdateResult {
+        var proposedBindings = appSettings.shortcutBindings
+        proposedBindings[type.rawValue] = binding
+        return applyShortcutBindings(proposedBindings)
+    }
+
+    @discardableResult
+    func setShortcutEnabled(for type: WorkflowType, isEnabled: Bool) -> ShortcutUpdateResult {
+        var binding = shortcutBinding(for: type)
+        binding.isEnabled = isEnabled
+        return updateShortcut(for: type, binding: binding)
+    }
+
+    @discardableResult
+    func resetShortcut(for type: WorkflowType) -> ShortcutUpdateResult {
+        var proposedBindings = appSettings.shortcutBindings
+        proposedBindings[type.rawValue] = ShortcutConfiguration.defaultBinding(for: type)
+        return applyShortcutBindings(proposedBindings)
+    }
+
+    @discardableResult
+    func resetAllShortcuts() -> ShortcutUpdateResult {
+        applyShortcutBindings(ShortcutConfiguration.defaultBindings)
+    }
+
+    func setShortcutCaptureActive(_ isCapturing: Bool) {
+        hotkeyService.setCapturingShortcuts(isCapturing)
+    }
+
+    private func applyShortcutBindings(_ bindings: [String: ShortcutBinding]) -> ShortcutUpdateResult {
+        if let error = ShortcutConfiguration.validationError(for: bindings) {
+            return .rejected(error)
+        }
+
+        let normalizedBindings = bindings.reduce(into: [String: ShortcutBinding]()) { result, entry in
+            result[entry.key] = entry.value.normalized
+        }
+
+        // HotkeyService repeats the validation at its runtime boundary. Apply
+        // it before changing AppSettings so a rejected update cannot leave the
+        // persisted model and active monitor in different states.
+        let serviceResult = hotkeyService.updateConfiguration(normalizedBindings)
+        guard serviceResult == .applied else { return serviceResult }
+
+        var updatedSettings = appSettings
+        updatedSettings.shortcutBindings = normalizedBindings
+        updatedSettings.shortcutConfigurationVersion = ShortcutConfiguration.currentVersion
+        appSettings = updatedSettings
+        return .applied
     }
 
     // MARK: - Workflow Management

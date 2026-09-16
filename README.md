@@ -102,6 +102,12 @@ If you do not grant Accessibility permission, you can still copy results manuall
 
 Full Disk Access is not required. If auto-paste does not work even though transcription succeeds, open **System Settings -> Privacy & Security -> Accessibility**, enable Blitztext there, restart Blitztext, and try again with the cursor focused in a text field. If macOS prompts for Automation access to System Events, allow it so Blitztext can send the paste command. If macOS shows multiple Blitztext entries, remove or disable the old ones and grant the permission to the app you just built or installed.
 
+## Shortcuts
+
+All six workflows have configurable global shortcuts. Open **Einstellungen -> Anpassen**, click a shortcut field, and press the desired combination. A shortcut may use `Fn`, `Shift`, `Ctrl`, `Option`, or `Cmd` plus one letter, number, Space, or F-key. Single ordinary keys, Escape, and media keys are not accepted. Existing defaults remain available through the reset controls.
+
+The **Halten** mode records while the shortcut is held and stops on release. The **Drücken** mode starts and stops with repeated presses; Escape remains the fixed cancellation key. The switch or the clear button disables a workflow without discarding its saved shortcut. Shortcut changes take effect immediately and do not interrupt an ongoing recording.
+
 ## Data Flow
 
 The preview has no custom backend.

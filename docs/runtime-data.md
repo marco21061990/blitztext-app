@@ -71,6 +71,15 @@ The container currently includes:
 Prompt customization, custom terms, and context are stored as plain JSON. Do not
 ask users to place secrets in those fields.
 
+`AppSettings` also stores the shortcut configuration as versioned JSON under
+`shortcutBindings`. The dictionary key is the workflow raw value; each entry
+contains the physical key code (or no standard key for a modifier-only
+shortcut), workflow modifier flags, the display label captured from AppKit when
+available, and its enabled state.
+Missing shortcut data in older settings files migrates to the six historical
+defaults. Invalid entries fall back independently to the affected workflow's
+default. No shortcut data leaves the device.
+
 ## Keychain
 
 The OpenAI API key is stored through `KeychainService`:
