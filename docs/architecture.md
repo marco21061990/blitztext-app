@@ -117,7 +117,7 @@ APIs.
 | `LocalTranscriptionService.swift` | WhisperKit model discovery, download, load, local transcription. |
 | `KeychainService.swift` | API key storage in macOS Keychain. |
 | `OpenAIKeyValidationService.swift` | Explicit user-triggered OpenAI API key validation request. |
-| `HotkeyService.swift` | Global and local modifier-key monitors. |
+| `HotkeyService.swift` | Global and local modifier/key monitors, configurable shortcut matching, and Escape cancellation. |
 | `AccessibilityPermissionService.swift` | AX trust checks and System Settings deep link. |
 | `AutoPasteService.swift` | Temporary clipboard paste, System Events and CGEvent Cmd+V dispatch, paste menu fallback, and clipboard restore. |
 | `LaunchAtLoginService.swift` | `SMAppService.mainApp` registration. |
@@ -131,6 +131,12 @@ APIs.
 mode panel, workflow list, settings entry, and active workflow views. It is a
 large SwiftUI file. Prefer small, focused edits unless a deliberate view split
 is part of the task.
+
+`Features/Settings/SettingsContentView.swift` provides a native AppKit-backed
+shortcut recorder. It delegates validation and persistence to `AppState`; it
+does not maintain a second shortcut map. While a row records, the hotkey
+service ignores new triggers so recording the new combination cannot start a
+workflow accidentally.
 
 `Features/Settings/SettingsContentView.swift` contains two settings tabs:
 

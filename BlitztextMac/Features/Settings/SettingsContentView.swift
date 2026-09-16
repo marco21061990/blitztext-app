@@ -698,6 +698,8 @@ struct AccessSettingsView: View {
 struct CustomizeSettingsView: View {
     @Bindable var appState: AppState
     @State private var newTerm = ""
+    @State private var recordingWorkflow: WorkflowType?
+    @State private var shortcutErrors: [WorkflowType: String] = [:]
 
     private var installedLocalModels: [LocalTranscriptionModel] {
         LocalTranscriptionService.installedModels()
@@ -821,19 +823,25 @@ struct CustomizeSettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionLabel(text: "Tastenk\u{00FC}rzel")
 
-                VStack(spacing: 6) {
-                    ForEach(WorkflowType.mainMenuCases) { type in
-                        HStack {
-                            Text(type.hotkeyLabel)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .frame(width: 124, alignment: .leading)
-                            Text(appState.displayName(for: type))
-                                .font(.system(size: 11.5, weight: .medium))
-                            Spacer()
-                        }
+                VStack(spacing: 8) {
+                    ForEach(WorkflowType.allCases) { type in
+                        shortcutRow(for: type)
                     }
                 }
+
+                HStack(spacing: 8) {
+                    Button("Alle Standardbelegungen") {
+                        resetAllShortcuts()
+                    }
+                    .controlSize(.small)
+
+                    Spacer()
+                }
+
+                Text("Escape bleibt fest zum Abbrechen reserviert. Medientasten und einzelne Tasten ohne Modifier werden nicht verwendet. Änderungen gelten sofort; laufende Aufnahmen bleiben unberührt.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 // Mode picker
                 VStack(alignment: .leading, spacing: 8) {
@@ -1006,6 +1014,10 @@ struct CustomizeSettingsView: View {
 
         }
         .padding(16)
+        .onDisappear {
+            appState.setShortcutCaptureActive(false)
+            recordingWorkflow = nil
+        }
     }
 
     private func addTerm() {
@@ -1015,6 +1027,340 @@ struct CustomizeSettingsView: View {
             appState.textImprovementSettings.customTerms.append(trimmed)
         }
         newTerm = ""
+    }
+
+    private func shortcutRow(for type: WorkflowType) -> some View {
+        let binding = appState.shortcutBinding(for: type)
+        let isRecording = recordingWorkflow == type
+
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 5) {
+                Image(systemName: type.icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(appState.displayName(for: type))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineLimit(1)
+                    Text(binding.displayLabel)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                ShortcutRecorderField(
+                    binding: binding,
+                    isRecording: isRecording,
+                    onBegin: { beginShortcutRecording(for: type) },
+                    onFinish: { candidate, captureError in
+                        finishShortcutRecording(
+                            for: type,
+                            candidate: candidate,
+                            captureError: captureError
+                        )
+                    }
+                )
+                .frame(width: 120, height: 26)
+
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { appState.shortcutBinding(for: type).isEnabled },
+                        set: { isEnabled in
+                            updateShortcutEnabled(for: type, isEnabled: isEnabled)
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .frame(width: 26)
+
+                Button {
+                    updateShortcutEnabled(for: type, isEnabled: false)
+                } label: {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(SubtleButtonStyle())
+                .help("Shortcut deaktivieren")
+                .accessibilityLabel("Shortcut deaktivieren")
+                .disabled(!binding.isEnabled)
+
+                Button {
+                    resetShortcut(for: type)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(SubtleButtonStyle())
+                .help("Standardbelegung wiederherstellen")
+            }
+
+            if let errorText = shortcutErrors[type] {
+                Text(errorText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 23)
+            }
+        }
+    }
+
+    private func beginShortcutRecording(for type: WorkflowType) -> Bool {
+        guard recordingWorkflow == nil || recordingWorkflow == type else { return false }
+        recordingWorkflow = type
+        shortcutErrors[type] = nil
+        appState.setShortcutCaptureActive(true)
+        return true
+    }
+
+    private func finishShortcutRecording(
+        for type: WorkflowType,
+        candidate: ShortcutBinding?,
+        captureError: ShortcutConfigurationError?
+    ) {
+        guard recordingWorkflow == type else { return }
+
+        appState.setShortcutCaptureActive(false)
+        recordingWorkflow = nil
+
+        if let captureError {
+            shortcutErrors[type] = captureError.localizedDescription
+            return
+        }
+
+        guard let candidate else { return }
+
+        switch appState.updateShortcut(for: type, binding: candidate) {
+        case .applied:
+            shortcutErrors[type] = nil
+        case .rejected(let error):
+            shortcutErrors[type] = error.localizedDescription
+        }
+    }
+
+    private func updateShortcutEnabled(for type: WorkflowType, isEnabled: Bool) {
+        switch appState.setShortcutEnabled(for: type, isEnabled: isEnabled) {
+        case .applied:
+            shortcutErrors[type] = nil
+        case .rejected(let error):
+            shortcutErrors[type] = error.localizedDescription
+        }
+    }
+
+    private func resetShortcut(for type: WorkflowType) {
+        guard recordingWorkflow == nil else { return }
+
+        switch appState.resetShortcut(for: type) {
+        case .applied:
+            shortcutErrors[type] = nil
+        case .rejected(let error):
+            shortcutErrors[type] = error.localizedDescription
+        }
+    }
+
+    private func resetAllShortcuts() {
+        guard recordingWorkflow == nil else { return }
+
+        switch appState.resetAllShortcuts() {
+        case .applied:
+            shortcutErrors.removeAll()
+        case .rejected(let error):
+            for type in WorkflowType.allCases {
+                shortcutErrors[type] = error.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - Shortcut Recorder
+
+private struct ShortcutRecorderField: NSViewRepresentable {
+    let binding: ShortcutBinding
+    let isRecording: Bool
+    let onBegin: () -> Bool
+    let onFinish: (ShortcutBinding?, ShortcutConfigurationError?) -> Void
+
+    func makeNSView(context: Context) -> ShortcutRecorderNSView {
+        let view = ShortcutRecorderNSView()
+        view.update(
+            binding: binding,
+            isRecording: isRecording,
+            onBegin: onBegin,
+            onFinish: onFinish
+        )
+        return view
+    }
+
+    func updateNSView(_ nsView: ShortcutRecorderNSView, context: Context) {
+        nsView.update(
+            binding: binding,
+            isRecording: isRecording,
+            onBegin: onBegin,
+            onFinish: onFinish
+        )
+    }
+}
+
+private final class ShortcutRecorderNSView: NSView {
+    private var displayedBinding = ShortcutBinding(isEnabled: false)
+    private var isCapturing = false
+    private var pendingKeyCode: UInt16?
+    private var pendingKeyLabel: String?
+    private var pendingModifiers: NSEvent.ModifierFlags = []
+    private var capturedModifiers: NSEvent.ModifierFlags = []
+    private var systemDefinedMonitor: Any?
+
+    private var onBegin: (() -> Bool)?
+    private var onFinish: ((ShortcutBinding?, ShortcutConfigurationError?) -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+    override var isFlipped: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let systemDefinedMonitor {
+            NSEvent.removeMonitor(systemDefinedMonitor)
+            self.systemDefinedMonitor = nil
+        }
+
+        guard window != nil else { return }
+        systemDefinedMonitor = NSEvent.addLocalMonitorForEvents(matching: .systemDefined) { [weak self] event in
+            guard let self, self.isCapturing else { return event }
+            self.finish(candidate: nil, error: .unsupportedKey)
+            return nil
+        }
+    }
+
+    deinit {
+        if let systemDefinedMonitor {
+            NSEvent.removeMonitor(systemDefinedMonitor)
+        }
+    }
+
+    func update(
+        binding: ShortcutBinding,
+        isRecording: Bool,
+        onBegin: @escaping () -> Bool,
+        onFinish: @escaping (ShortcutBinding?, ShortcutConfigurationError?) -> Void
+    ) {
+        displayedBinding = binding
+        self.onBegin = onBegin
+        self.onFinish = onFinish
+
+        if isRecording, !isCapturing {
+            beginCapture()
+        } else if !isRecording, isCapturing {
+            endCapture()
+        }
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard onBegin?() ?? false else { return }
+        window?.makeFirstResponder(self)
+        beginCapture()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isCapturing else { return }
+
+        if event.keyCode == 53 {
+            finish(candidate: nil, error: nil)
+            return
+        }
+
+        guard !event.isARepeat else { return }
+        guard ShortcutConfiguration.isSupportedStandardKey(for: event) else {
+            finish(candidate: nil, error: .unsupportedKey)
+            return
+        }
+
+        pendingKeyCode = event.keyCode
+        pendingKeyLabel = ShortcutConfiguration.keyLabel(for: event)
+        pendingModifiers = event.modifierFlags.intersection(ShortcutConfiguration.workflowModifierMask)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard isCapturing,
+              let pendingKeyCode,
+              pendingKeyCode == event.keyCode else {
+            return
+        }
+
+        let candidate = ShortcutBinding(
+            keyCode: pendingKeyCode,
+            modifiers: pendingModifiers,
+            keyLabel: pendingKeyLabel,
+            isEnabled: true
+        )
+        finish(candidate: candidate, error: ShortcutConfiguration.validationError(for: candidate))
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        guard isCapturing, pendingKeyCode == nil else { return }
+
+        let flags = event.modifierFlags.intersection(ShortcutConfiguration.workflowModifierMask)
+        if flags.isEmpty {
+            guard !capturedModifiers.isEmpty else { return }
+            let candidate = ShortcutBinding(modifiers: capturedModifiers, isEnabled: true)
+            finish(candidate: candidate, error: ShortcutConfiguration.validationError(for: candidate))
+        } else {
+            capturedModifiers.formUnion(flags)
+        }
+    }
+
+    private func beginCapture() {
+        guard !isCapturing else { return }
+        isCapturing = true
+        pendingKeyCode = nil
+        pendingKeyLabel = nil
+        pendingModifiers = []
+        capturedModifiers = []
+        needsDisplay = true
+    }
+
+    private func endCapture() {
+        isCapturing = false
+        pendingKeyCode = nil
+        pendingKeyLabel = nil
+        pendingModifiers = []
+        capturedModifiers = []
+        needsDisplay = true
+    }
+
+    private func finish(candidate: ShortcutBinding?, error: ShortcutConfigurationError?) {
+        guard isCapturing else { return }
+        endCapture()
+        onFinish?(candidate, error)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        (isCapturing ? NSColor.selectedControlColor : NSColor.controlBackgroundColor).setFill()
+        path.fill()
+        (isCapturing ? NSColor.keyboardFocusIndicatorColor : NSColor.separatorColor).setStroke()
+        path.lineWidth = isCapturing ? 1.5 : 0.5
+        path.stroke()
+
+        let title = isCapturing ? "Kombination drücken …" : displayedBinding.displayLabel
+        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        let color = isCapturing ? NSColor.controlTextColor : NSColor.secondaryLabelColor
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+        ]
+        let textSize = title.size(withAttributes: attributes)
+        let point = CGPoint(
+            x: max(bounds.midX - textSize.width / 2, 6),
+            y: bounds.midY - textSize.height / 2
+        )
+        title.draw(at: point, withAttributes: attributes)
     }
 }
 

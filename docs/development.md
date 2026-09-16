@@ -152,6 +152,12 @@ For behavior changes, build and launch the app, then check the relevant path:
 For local transcription changes, also test with a missing model and an installed
 model.
 
+For shortcut changes, additionally verify the six migrated defaults, a custom
+modifier-plus-key combination from another app, hold and toggle mode, duplicate
+and reserved-key rejection, disabling and re-enabling a row, per-row and global
+reset, and changing a shortcut while a hold-mode recording is active. A changed
+shortcut must not stop that recording before the old combination is released.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes to `main` and pull requests.

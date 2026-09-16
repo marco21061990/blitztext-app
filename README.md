@@ -110,6 +110,12 @@ Full Disk Access is not required. If auto-paste does not work even though transc
 
 For Spotify playback control, allow Blitztext under **System Settings -> Privacy & Security -> Automation** when macOS asks. YouTube in Chrome uses the Accessibility permission. If media control is unavailable, dictation continues and no playback is started automatically.
 
+## Shortcuts
+
+All six workflows have configurable global shortcuts. Open **Einstellungen -> Anpassen**, click a shortcut field, and press the desired combination. A shortcut may use `Fn`, `Shift`, `Ctrl`, `Option`, or `Cmd` plus one letter, number, Space, or F-key. Single ordinary keys, Escape, and media keys are not accepted. Existing defaults remain available through the reset controls.
+
+The **Halten** mode records while the shortcut is held and stops on release. The **Drücken** mode starts and stops with repeated presses; Escape remains the fixed cancellation key. The switch or the clear button disables a workflow without discarding its saved shortcut. Shortcut changes take effect immediately and do not interrupt an ongoing recording.
+
 ## Data Flow
 
 The preview has no custom backend.

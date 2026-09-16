@@ -84,6 +84,19 @@ prefer an Apple Development signature to keep that identity stable. If the
 signature changes after a rebuild, remove the old Blitztext entry under
 Accessibility and grant the permission again to the app in its final location.
 
+## 6. Configure Global Shortcuts
+
+Open **Einstellungen -> Anpassen** and click the shortcut field for a workflow.
+Press and release a combination to save it immediately. Use one or more of
+`Fn`, `Shift`, `Ctrl`, `Option`, or `Cmd` with a letter, number, Space, or F-key.
+Single ordinary keys, Escape, and media keys are rejected. The reset button on
+each row restores one default; **Alle Standardbelegungen** restores all six.
+
+The switch or the clear button disables only that workflow's global shortcut
+and keeps its recorded combination for later. **Halten** and **Drücken** remain
+global modes for all shortcuts. Escape always cancels an active workflow and
+cannot be reassigned.
+
 ## Troubleshooting
 
 - If `xcodebuild` reports that the active developer directory is only Command Line Tools, run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
