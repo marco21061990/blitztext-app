@@ -3,6 +3,15 @@ import Foundation
 enum MediaPlaybackProvider: String, CaseIterable {
     case spotify
     case youtubeChrome
+
+    var displayName: String {
+        switch self {
+        case .spotify:
+            return "Spotify"
+        case .youtubeChrome:
+            return "YouTube in Chrome"
+        }
+    }
 }
 
 enum MediaPlaybackState: Equatable {
@@ -18,6 +27,40 @@ struct MediaPlaybackSnapshot: Equatable {
     let state: MediaPlaybackState
 }
 
+struct MediaPlaybackSelectionContext: Equatable {
+    let frontmostBundleIdentifier: String?
+    let trigger: String
+}
+
+struct MediaPlaybackCommandReceipt: Equatable {
+    let sessionID: UUID
+    let sourceIdentifier: String
+}
+
+enum MediaPlaybackPauseResult {
+    case notIssued(snapshot: MediaPlaybackSnapshot?, reason: String)
+    case issuedUnconfirmed(snapshot: MediaPlaybackSnapshot?, reason: String)
+    case confirmed(MediaPlaybackSnapshot)
+
+    var snapshot: MediaPlaybackSnapshot? {
+        switch self {
+        case .notIssued(let snapshot, _), .issuedUnconfirmed(let snapshot, _):
+            return snapshot
+        case .confirmed(let snapshot):
+            return snapshot
+        }
+    }
+
+    var reason: String {
+        switch self {
+        case .notIssued(_, let reason), .issuedUnconfirmed(_, let reason):
+            return reason
+        case .confirmed:
+            return "confirmed"
+        }
+    }
+}
+
 struct MediaPlaybackSessionHandle: Hashable {
     let id: UUID
 }
@@ -26,7 +69,7 @@ struct MediaPlaybackPreparationDeadline {
     let startedAt: Date
     let budget: TimeInterval
 
-    init(startedAt: Date, budget: TimeInterval = 0.5) {
+    init(startedAt: Date, budget: TimeInterval = MediaPlaybackTiming.preparationBudget) {
         self.startedAt = startedAt
         self.budget = budget
     }
@@ -34,6 +77,31 @@ struct MediaPlaybackPreparationDeadline {
     func hasExpired(at date: Date) -> Bool {
         date.timeIntervalSince(startedAt) >= budget
     }
+}
+
+enum MediaPlaybackStatus: Equatable {
+    case idle
+    case preparing
+    case paused(MediaPlaybackProvider)
+    case restoring(MediaPlaybackProvider)
+    case restored(MediaPlaybackProvider)
+    case externalChange(MediaPlaybackProvider)
+    case restoreFailed(MediaPlaybackProvider)
+
+    var isTerminal: Bool {
+        switch self {
+        case .restored, .externalChange, .restoreFailed:
+            return true
+        case .idle, .preparing, .paused, .restoring:
+            return false
+        }
+    }
+}
+
+enum MediaPlaybackTiming {
+    static let preparationBudget: TimeInterval = 0.5
+    static let confirmationPollInterval: TimeInterval = 0.025
+    static let restorationBudget: TimeInterval = 0.4
 }
 
 enum MediaPlaybackOutcome: String {
@@ -49,6 +117,7 @@ struct MediaPlaybackSession: Equatable {
     let initialState: MediaPlaybackState
     var lastObservedState: MediaPlaybackState
     var pauseConfirmedByBlitztext = false
+    var pauseReceipt: MediaPlaybackCommandReceipt?
     var externalChangeDetected = false
     var restorationAttempted = false
 }
@@ -78,17 +147,21 @@ struct MediaPlaybackSessionStateMachine {
     mutating func confirmPause(
         _ handle: MediaPlaybackSessionHandle,
         sourceIdentifier: String,
-        observedState: MediaPlaybackState
+        observedState: MediaPlaybackState,
+        receipt: MediaPlaybackCommandReceipt
     ) -> Bool {
         guard var session,
               session.id == handle.id,
               session.sourceIdentifier == sourceIdentifier,
               session.initialState == .playing,
-              observedState == .paused else {
+              observedState == .paused,
+              receipt.sessionID == handle.id,
+              receipt.sourceIdentifier == sourceIdentifier else {
             return false
         }
 
         session.pauseConfirmedByBlitztext = true
+        session.pauseReceipt = receipt
         session.lastObservedState = observedState
         self.session = session
         return true

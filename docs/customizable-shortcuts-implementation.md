@@ -1,8 +1,8 @@
 # Implementierungsauftrag: Anpassbare globale Shortcuts
 
-**Status:** IMPLEMENTED IN WORKTREE
+**Status:** IMPLEMENTED IN WORKTREE; manual smoke acceptance pending
 **Scope:** Blitztext macOS App
-**Letzte Aktualisierung:** 2026-09-16
+**Letzte Aktualisierung:** 2026-09-17
 
 ## Ziel
 
@@ -97,6 +97,7 @@ konfigurierbaren Bereich ersetzt:
 - Anzeigename und aktuelles Shortcut-Label;
 - fokussierbares Aufzeichnungsfeld mit dem Hinweis, eine Kombination zu
   drücken;
+- zweizeilige Workflow-Karte mit einer einzigen sichtbaren Keycap-Anzeige;
 - Aktiv-Schalter pro Workflow;
 - Inline-Fehler bei ungültiger Taste, fehlendem Modifier, Duplikat oder nicht
   registrierbarer Belegung;

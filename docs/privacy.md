@@ -28,13 +28,20 @@ When enabled, the app inspects supported playback locally before each recording.
 The first release supports Spotify through macOS Apple Events and YouTube in
 Chrome through the visible Accessibility player controls. It pauses only a
 source that was observed playing and resumes only after Blitztext confirmed its
-own pause. Already-paused, unknown, unsupported, or changed sources are left
-alone. Volume and mute are never changed.
+own pause. A supported frontmost source is preferred; when no supported player
+is frontmost and multiple sources explicitly report playing, each confirmed
+pause is owned and restored independently. Already-paused, unknown,
+unsupported, or changed sources are left alone. Volume and mute are never
+changed.
 
 No media state, track metadata, browser content, or playback history is
-persisted or sent to a Blitztext service. If macOS permission is missing or a
-control operation cannot be confirmed, recording continues and the feature
-fails open. The setting can be disabled under **Medien während Diktat**.
+persisted or sent to a Blitztext service. Runtime diagnostics are limited to
+provider, coarse state/decision fields, source presence, and operation
+duration; they do not log track names, URLs, browser content, transcripts, or
+audio. If macOS permission is missing or a control operation cannot be
+confirmed, recording continues and the feature fails open. The popover may
+show a transient in-memory media status, which is not saved. The setting can
+be disabled under **Medien während Diktat**.
 
 ## API Usage And Cost Estimate
 

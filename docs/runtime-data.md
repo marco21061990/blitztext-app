@@ -139,22 +139,32 @@ longer the default auto-paste path.
 ## Media Playback Coordination
 
 `MediaPlaybackCoordinator` keeps media-control state in memory only. For each
-recording or retry it selects at most one supported active source, reads its
-current state, and uses an explicit pause or play control only when the
-preconditions are confirmed. Spotify is accessed with Apple Events. YouTube in
-Chrome is accessed through the focused Chrome window's Accessibility tree and
-its visible `movie_player` controls. The coordinator never changes volume or
-mute state, never starts a source that was not initially playing, and does not
-persist track, URL, browser, or playback data.
+recording or retry it selects a supported frontmost source, or all supported
+sources that explicitly report playing when no supported player is frontmost.
+It uses an explicit pause or play control only when the preconditions are
+confirmed. Spotify is accessed with Apple Events. YouTube in Chrome is
+accessed through the Chrome window selected in the context captured before the
+Blitztext popover is shown, using its visible `movie_player` controls. If no
+supported app was frontmost, the coordinator may inspect multiple Chrome
+windows, but only accepts a unique, pressable control on an allowlisted
+YouTube host. It never changes volume or mute state, never starts a source that
+was not initially playing, and does not persist track, URL, browser, or
+playback data.
 
-Preparation runs off the main thread with a 500 ms budget. A timeout,
-permission denial, ambiguous source, unknown state, failed pause confirmation,
-or changed player is fail-open: the recording still starts and no later Play
-command is sent for that session. If an in-flight control call returns a
-confirmed pause after the budget, the coordinator restores that side effect
-immediately instead of attaching it to the recording. Runtime diagnostics
-contain provider/state decisions only, not track names, URLs, transcripts, or
-audio.
+Preparation runs off the main thread with a 500 ms budget. Provider inspections
+run concurrently; a supported frontmost provider is preferred, while the
+fallback path requires a complete inspection and explicit source identity for
+every playing provider. Each pause is confirmed and owned independently, so a
+failed confirmation for one source does not block a separately confirmed source
+or cause an unsafe resume. A timeout, permission denial, unknown state, failed
+pause confirmation, or changed player is fail-open: the recording still starts
+and no later Play command is sent for that source. If an in-flight control call
+returns a confirmed pause after the budget, the coordinator restores that side
+effect immediately instead of attaching it to the recording. Runtime
+diagnostics contain only provider, state, presence/absence of a source,
+decision result, and bounded operation duration. They do not contain track
+names, URLs, transcripts, or audio. The popover status is transient in-memory
+state and is not persisted.
 
 ## macOS Permissions
 

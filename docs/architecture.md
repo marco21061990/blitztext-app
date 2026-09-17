@@ -59,10 +59,13 @@ behavior changes here.
 
 `BlitztextMac/Services/MediaPlaybackCoordinator.swift` owns the local media
 control boundary. `SpotifyMediaPlaybackAdapter` reads and controls Spotify
-through Apple Events. `ChromeYouTubeMediaPlaybackAdapter` traverses the focused
+through Apple Events. `ChromeYouTubeMediaPlaybackAdapter` receives a selection
+context captured before Blitztext presents its popover, traverses the selected
 Chrome window's Accessibility tree, locates a YouTube `movie_player`, and acts
-on explicit `Pause` or `Play` buttons. Both adapters fail closed for unknown or
-ambiguous state.
+on one explicit, pressable `Pause` or `Play` button. When no supported app was
+frontmost, it may inspect all Chrome windows, but only with a strict YouTube
+host allowlist and unique window/document/player/control identity. Both
+adapters fail closed for unknown or ambiguous state within their own controls.
 
 `MediaPlaybackSessionStateMachine` is the pure ownership layer. A session is
 created only for an initially playing source and only becomes restorable after
@@ -71,12 +74,25 @@ identity, external changes, and one-time restoration. Polling during processing
 detects a user or external playback change; a changed source, unknown state, or
 already-playing source prevents restoration.
 
+Adapter inspections run concurrently inside the bounded preparation window. If
+Spotify or Chrome is the frontmost supported app, that provider gets priority
+and a slow background provider cannot consume the foreground decision window.
+When no supported provider is frontmost, selection requires a complete
+inspection and explicit source identity for every playing provider. Multiple
+fully identified playing providers become one recording session with separate
+ownership entries; each pause and restore is confirmed independently. A short,
+bounded reconciliation poll ensures an asynchronous player state transition is
+not mistaken for a failed or already-owned action.
+
 `AppState` starts a workflow only after the coordinator's preparation callback
 or its 500 ms fail-open deadline. All recording workflows share this path.
 Recording stop is distinct from cancellation, successful paste completion, and
 terminal failure so media restoration happens at the correct lifecycle point.
 If a player call completes with a confirmed pause after the deadline, the
 coordinator restores it immediately and does not attach it to the recording.
+The active media state is exposed in the popover while a source is paused or
+being restored, including an explicit message when restoration is skipped or
+cannot be confirmed.
 
 ## Workflows
 
@@ -136,7 +152,11 @@ is part of the task.
 shortcut recorder. It delegates validation and persistence to `AppState`; it
 does not maintain a second shortcut map. While a row records, the hotkey
 service ignores new triggers so recording the new combination cannot start a
-workflow accidentally.
+workflow accidentally. Each workflow is shown as a two-line card with one
+canonical keycap display, a labeled active switch, explicit change/cancel and
+reset actions, and reserved space for validation errors. The menu bar popover
+uses a 430-point content width so the full workflow and shortcut labels remain
+readable.
 
 `Features/Settings/SettingsContentView.swift` contains two settings tabs:
 

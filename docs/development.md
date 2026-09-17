@@ -101,14 +101,23 @@ swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
   -o /tmp/blitztext-media-coordinator-test \
   Tests/MediaPlaybackCoordinatorTests.swift \
   BlitztextMac/Services/MediaPlaybackSession.swift \
+  BlitztextMac/Services/ChromeYouTubeAccessibility.swift \
   BlitztextMac/Services/MediaPlaybackCoordinator.swift
 /tmp/blitztext-media-coordinator-test
+
+swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
+  -target arm64-apple-macosx14.0 \
+  -o /tmp/blitztext-chrome-ax-test \
+  Tests/ChromeYouTubeAccessibilityTests.swift \
+  BlitztextMac/Services/ChromeYouTubeAccessibility.swift
+/tmp/blitztext-chrome-ax-test
 ```
 
 Each prints on success and exits non-zero on failure. `OpenAIUsageTests` covers
 cost calculation, calendar day/month aggregation, usage persistence round-trip,
-and API usage response decoding. The media-session and coordinator tests cover
-pause ownership, restoration rules, fail-open behavior, and the preparation
+and API usage response decoding. The media-session, coordinator, and Chrome
+Accessibility tests cover pause ownership, restoration rules, fail-open
+behavior, strict YouTube host and control classification, and the preparation
 deadline without using a real player.
 
 Minimum verification for code changes is still:
@@ -143,7 +152,9 @@ For behavior changes, build and launch the app, then check the relevant path:
 8. Confirm text is copied or pasted. If auto-paste fails, confirm the app shows
    a copied fallback message instead of claiming the text was inserted.
 9. With media playback enabled, verify a playing Spotify or YouTube-in-Chrome
-   source pauses before recording and resumes only after successful paste.
+   source pauses before recording and resumes only after successful paste. Also
+   verify that when both explicitly report `playing`, both confirmed pauses are
+   restored independently.
 10. Verify an already-paused, unsupported, permission-denied, changed, or
     externally resumed source is left alone and that recording still starts.
 11. Confirm temporary recordings are removed on best effort.

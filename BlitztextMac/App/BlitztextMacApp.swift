@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 340, height: 480)
+        popover.contentSize = NSSize(width: 430, height: 600)
         popover.behavior = .transient
         popover.delegate = self
         popover.contentViewController = NSHostingController(rootView: MenuBarView(appState: appState))
@@ -47,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         appState.onRecordingOverlayStateChange = { [weak self] state in
             self?.recordingOverlayController.update(with: state)
+        }
+        appState.onWorkflowPresentationRequested = { [weak self] in
+            self?.showPopover()
         }
         appState.hotkeyService.start()
 
@@ -101,9 +104,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                (active.phase.isActive || appState.isPreparingWorkflow) {
                 appState.stopCurrentWorkflow()
             } else {
-                appState.prepareForPopoverPresentation()
-                appState.startWorkflow(type, source: .manual)
-                showPopover()
+                // Keep Chrome as the foreground application while its
+                // Accessibility control is pressed. Showing Blitztext's
+                // popover first makes Chrome acknowledge AXPress without
+                // dispatching the YouTube click reliably.
+                if !popover.isShown {
+                    appState.prepareForPopoverPresentation()
+                }
+                appState.startWorkflow(
+                    type,
+                    source: .manual,
+                    presentWhenReady: true
+                )
             }
         }
     }
