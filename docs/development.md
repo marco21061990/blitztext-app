@@ -101,14 +101,23 @@ swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
   -o /tmp/blitztext-media-coordinator-test \
   Tests/MediaPlaybackCoordinatorTests.swift \
   BlitztextMac/Services/MediaPlaybackSession.swift \
+  BlitztextMac/Services/ChromeYouTubeAccessibility.swift \
   BlitztextMac/Services/MediaPlaybackCoordinator.swift
 /tmp/blitztext-media-coordinator-test
+
+swiftc -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk \
+  -target arm64-apple-macosx14.0 \
+  -o /tmp/blitztext-chrome-ax-test \
+  Tests/ChromeYouTubeAccessibilityTests.swift \
+  BlitztextMac/Services/ChromeYouTubeAccessibility.swift
+/tmp/blitztext-chrome-ax-test
 ```
 
 Each prints on success and exits non-zero on failure. `OpenAIUsageTests` covers
 cost calculation, calendar day/month aggregation, usage persistence round-trip,
-and API usage response decoding. The media-session and coordinator tests cover
-pause ownership, restoration rules, fail-open behavior, and the preparation
+and API usage response decoding. The media-session, coordinator, and Chrome
+Accessibility tests cover pause ownership, restoration rules, fail-open
+behavior, strict YouTube host and control classification, and the preparation
 deadline without using a real player.
 
 Minimum verification for code changes is still:

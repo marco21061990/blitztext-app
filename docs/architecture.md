@@ -59,10 +59,13 @@ behavior changes here.
 
 `BlitztextMac/Services/MediaPlaybackCoordinator.swift` owns the local media
 control boundary. `SpotifyMediaPlaybackAdapter` reads and controls Spotify
-through Apple Events. `ChromeYouTubeMediaPlaybackAdapter` traverses the focused
+through Apple Events. `ChromeYouTubeMediaPlaybackAdapter` receives a selection
+context captured before Blitztext presents its popover, traverses the selected
 Chrome window's Accessibility tree, locates a YouTube `movie_player`, and acts
-on explicit `Pause` or `Play` buttons. Both adapters fail closed for unknown or
-ambiguous state within their own player controls.
+on one explicit, pressable `Pause` or `Play` button. When no supported app was
+frontmost, it may inspect all Chrome windows, but only with a strict YouTube
+host allowlist and unique window/document/player/control identity. Both
+adapters fail closed for unknown or ambiguous state within their own controls.
 
 `MediaPlaybackSessionStateMachine` is the pure ownership layer. A session is
 created only for an initially playing source and only becomes restorable after

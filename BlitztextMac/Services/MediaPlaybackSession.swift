@@ -27,6 +27,40 @@ struct MediaPlaybackSnapshot: Equatable {
     let state: MediaPlaybackState
 }
 
+struct MediaPlaybackSelectionContext: Equatable {
+    let frontmostBundleIdentifier: String?
+    let trigger: String
+}
+
+struct MediaPlaybackCommandReceipt: Equatable {
+    let sessionID: UUID
+    let sourceIdentifier: String
+}
+
+enum MediaPlaybackPauseResult {
+    case notIssued(snapshot: MediaPlaybackSnapshot?, reason: String)
+    case issuedUnconfirmed(snapshot: MediaPlaybackSnapshot?, reason: String)
+    case confirmed(MediaPlaybackSnapshot)
+
+    var snapshot: MediaPlaybackSnapshot? {
+        switch self {
+        case .notIssued(let snapshot, _), .issuedUnconfirmed(let snapshot, _):
+            return snapshot
+        case .confirmed(let snapshot):
+            return snapshot
+        }
+    }
+
+    var reason: String {
+        switch self {
+        case .notIssued(_, let reason), .issuedUnconfirmed(_, let reason):
+            return reason
+        case .confirmed:
+            return "confirmed"
+        }
+    }
+}
+
 struct MediaPlaybackSessionHandle: Hashable {
     let id: UUID
 }
@@ -83,6 +117,7 @@ struct MediaPlaybackSession: Equatable {
     let initialState: MediaPlaybackState
     var lastObservedState: MediaPlaybackState
     var pauseConfirmedByBlitztext = false
+    var pauseReceipt: MediaPlaybackCommandReceipt?
     var externalChangeDetected = false
     var restorationAttempted = false
 }
@@ -112,17 +147,21 @@ struct MediaPlaybackSessionStateMachine {
     mutating func confirmPause(
         _ handle: MediaPlaybackSessionHandle,
         sourceIdentifier: String,
-        observedState: MediaPlaybackState
+        observedState: MediaPlaybackState,
+        receipt: MediaPlaybackCommandReceipt
     ) -> Bool {
         guard var session,
               session.id == handle.id,
               session.sourceIdentifier == sourceIdentifier,
               session.initialState == .playing,
-              observedState == .paused else {
+              observedState == .paused,
+              receipt.sessionID == handle.id,
+              receipt.sourceIdentifier == sourceIdentifier else {
             return false
         }
 
         session.pauseConfirmedByBlitztext = true
+        session.pauseReceipt = receipt
         session.lastObservedState = observedState
         self.session = session
         return true

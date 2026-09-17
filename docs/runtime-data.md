@@ -143,10 +143,13 @@ recording or retry it selects a supported frontmost source, or all supported
 sources that explicitly report playing when no supported player is frontmost.
 It uses an explicit pause or play control only when the preconditions are
 confirmed. Spotify is accessed with Apple Events. YouTube in Chrome is
-accessed through the focused Chrome window's Accessibility tree and its visible
-`movie_player` controls. The coordinator never changes volume or mute state,
-never starts a source that was not initially playing, and does not persist
-track, URL, browser, or playback data.
+accessed through the Chrome window selected in the context captured before the
+Blitztext popover is shown, using its visible `movie_player` controls. If no
+supported app was frontmost, the coordinator may inspect multiple Chrome
+windows, but only accepts a unique, pressable control on an allowlisted
+YouTube host. It never changes volume or mute state, never starts a source that
+was not initially playing, and does not persist track, URL, browser, or
+playback data.
 
 Preparation runs off the main thread with a 500 ms budget. Provider inspections
 run concurrently; a supported frontmost provider is preferred, while the

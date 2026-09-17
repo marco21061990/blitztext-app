@@ -9,6 +9,41 @@ protocol MediaPlaybackAdapter: AnyObject {
     func inspect() -> MediaPlaybackSnapshot
     func pause(expectedSourceIdentifier: String, before deadline: Date) -> MediaPlaybackSnapshot?
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot?
+
+    func inspect(selectionContext: MediaPlaybackSelectionContext) -> MediaPlaybackSnapshot
+    func pause(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> MediaPlaybackPauseResult
+    func resume(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext
+    ) -> MediaPlaybackSnapshot?
+}
+
+extension MediaPlaybackAdapter {
+    func inspect(selectionContext: MediaPlaybackSelectionContext) -> MediaPlaybackSnapshot {
+        inspect()
+    }
+
+    func pause(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> MediaPlaybackPauseResult {
+        guard let snapshot = pause(expectedSourceIdentifier: expectedSourceIdentifier, before: deadline) else {
+            return .issuedUnconfirmed(snapshot: nil, reason: "no_confirmation")
+        }
+        return .confirmed(snapshot)
+    }
+
+    func resume(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext
+    ) -> MediaPlaybackSnapshot? {
+        resume(expectedSourceIdentifier: expectedSourceIdentifier)
+    }
 }
 
 final class MediaPlaybackCoordinator {
@@ -55,6 +90,7 @@ final class MediaPlaybackCoordinator {
     /// recording start after the fixed budget, even if a player call stalls.
     func prepareForRecording(
         enabled: Bool,
+        selectionContext: MediaPlaybackSelectionContext? = nil,
         completion: @escaping (MediaPlaybackSessionHandle?) -> Void
     ) {
         guard enabled else {
@@ -68,6 +104,7 @@ final class MediaPlaybackCoordinator {
 
         let requestID = UUID()
         let startedAt = Date()
+        let selectionContext = selectionContext ?? captureSelectionContext(trigger: "coordinator")
         let pending = PendingPreparation(requestID: requestID, completion: completion)
 
         withStateLock {
@@ -75,7 +112,11 @@ final class MediaPlaybackCoordinator {
         }
 
         controlQueue.async { [weak self] in
-            self?.performPreparation(requestID: requestID, startedAt: startedAt)
+            self?.performPreparation(
+                requestID: requestID,
+                startedAt: startedAt,
+                selectionContext: selectionContext
+            )
         }
         timerQueue.asyncAfter(deadline: .now() + Self.recordingPreparationBudget) { [weak self] in
             self?.timeoutPreparation(requestID: requestID)
@@ -83,6 +124,13 @@ final class MediaPlaybackCoordinator {
         timerQueue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.discardExpiredPreparation(requestID: requestID)
         }
+    }
+
+    func captureSelectionContext(trigger: String) -> MediaPlaybackSelectionContext {
+        MediaPlaybackSelectionContext(
+            frontmostBundleIdentifier: frontmostBundleIdentifier(),
+            trigger: trigger
+        )
     }
 
     /// Cancels only a preparation that has not yet produced a session. A
@@ -109,13 +157,20 @@ final class MediaPlaybackCoordinator {
         }
     }
 
-    private func performPreparation(requestID: UUID, startedAt: Date) {
+    private func performPreparation(
+        requestID: UUID,
+        startedAt: Date,
+        selectionContext: MediaPlaybackSelectionContext
+    ) {
         let deadline = startedAt.addingTimeInterval(Self.recordingPreparationBudget)
 
         guard isPending(requestID: requestID) else { return }
         finishAnyActiveSessionOnControlQueue()
 
-        guard let candidates = selectCandidates(before: deadline) else {
+        guard let candidates = selectCandidates(
+            before: deadline,
+            selectionContext: selectionContext
+        ) else {
             completeWithoutSession(requestID: requestID)
             return
         }
@@ -149,32 +204,28 @@ final class MediaPlaybackCoordinator {
             }
 
             let pauseStartedAt = Date()
-            let pausedSnapshot = candidate.adapter.pause(
+            let pauseResult = candidate.adapter.pause(
                 expectedSourceIdentifier: sourceIdentifier,
+                selectionContext: selectionContext,
                 before: deadline
             )
             let pauseDuration = Int((Date().timeIntervalSince(pauseStartedAt) * 1000).rounded())
-            let pauseReason: String
-            if pausedSnapshot == nil {
-                pauseReason = "no_confirmation"
-            } else if pausedSnapshot?.sourceIdentifier != sourceIdentifier {
-                pauseReason = "source_changed"
-            } else if pausedSnapshot?.state != .paused {
-                pauseReason = "state_not_paused"
-            } else {
-                pauseReason = "confirmed"
-            }
+            let pausedSnapshot = pauseResult.snapshot
             logger.info(
-                "Media pause provider=\(candidate.snapshot.provider.rawValue, privacy: .public) result=\(pauseReason, privacy: .public) state=\(pausedSnapshot?.state.logValue ?? "none", privacy: .public) duration_ms=\(pauseDuration, privacy: .public)"
+                "Media pause provider=\(candidate.snapshot.provider.rawValue, privacy: .public) result=\(pauseResult.reason, privacy: .public) state=\(pausedSnapshot?.state.logValue ?? "none", privacy: .public) duration_ms=\(pauseDuration, privacy: .public)"
             )
 
-            guard let pausedSnapshot,
+            guard case .confirmed(let pausedSnapshot) = pauseResult,
                   pausedSnapshot.sourceIdentifier == sourceIdentifier,
                   pausedSnapshot.state == .paused,
                   stateMachine.confirmPause(
                       handle,
                       sourceIdentifier: sourceIdentifier,
-                      observedState: pausedSnapshot.state
+                      observedState: pausedSnapshot.state,
+                      receipt: MediaPlaybackCommandReceipt(
+                          sessionID: handle.id,
+                          sourceIdentifier: sourceIdentifier
+                      )
                   ) else {
                 logger.info("Media pause was not confirmed; continuing without ownership")
                 continue
@@ -183,6 +234,7 @@ final class MediaPlaybackCoordinator {
             ownedSources.append(
                 OwnedSource(
                     adapter: candidate.adapter,
+                    selectionContext: selectionContext,
                     stateMachine: stateMachine
                 )
             )
@@ -196,6 +248,7 @@ final class MediaPlaybackCoordinator {
         let prepared = ActiveSession(
             handle: handle,
             ownedSources: ownedSources,
+            selectionContext: selectionContext,
             outcome: nil
         )
 
@@ -236,8 +289,11 @@ final class MediaPlaybackCoordinator {
         scheduleMonitoring(for: prepared)
     }
 
-    private func selectCandidates(before deadline: Date) -> [(adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)]? {
-        let frontmostProvider = provider(for: frontmostBundleIdentifier())
+    private func selectCandidates(
+        before deadline: Date,
+        selectionContext: MediaPlaybackSelectionContext
+    ) -> [(adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)]? {
+        let frontmostProvider = provider(for: selectionContext.frontmostBundleIdentifier)
         let collector = InspectionCollector(count: adapters.count)
         let group = DispatchGroup()
         let completionSignals = adapters.map { _ in DispatchSemaphore(value: 0) }
@@ -246,7 +302,7 @@ final class MediaPlaybackCoordinator {
             group.enter()
             inspectionQueue.async { [weak self] in
                 let startedAt = Date()
-                let snapshot = adapter.inspect()
+                let snapshot = adapter.inspect(selectionContext: selectionContext)
                 collector.store(snapshot, at: index)
                 let duration = Int((Date().timeIntervalSince(startedAt) * 1000).rounded())
                 self?.logger.info(
@@ -407,7 +463,7 @@ final class MediaPlaybackCoordinator {
     }
 
     private func restorePreparedSource(_ source: OwnedSource, handle: MediaPlaybackSessionHandle) {
-        let current = source.adapter.inspect()
+        let current = source.adapter.inspect(selectionContext: source.selectionContext)
         let currentSourceIdentifier = current.sourceIdentifier ?? ""
         let decision: (shouldRestore: Bool, externalChangeDetected: Bool) = withStateLock {
             let shouldRestore = source.stateMachine.shouldRestore(
@@ -431,7 +487,10 @@ final class MediaPlaybackCoordinator {
 
         notifyStatus(.restoring(source.adapter.provider))
         let restoreStartedAt = Date()
-        let restored = source.adapter.resume(expectedSourceIdentifier: source.handleSourceIdentifier)
+        let restored = source.adapter.resume(
+            expectedSourceIdentifier: source.handleSourceIdentifier,
+            selectionContext: source.selectionContext
+        )
         let resultingState = restored?.state ?? .unknown
         let restoreDuration = Int((Date().timeIntervalSince(restoreStartedAt) * 1000).rounded())
         if resultingState == .playing {
@@ -463,7 +522,7 @@ final class MediaPlaybackCoordinator {
         guard shouldObserve else { return }
 
         for source in active.ownedSources {
-            let snapshot = source.adapter.inspect()
+            let snapshot = source.adapter.inspect(selectionContext: source.selectionContext)
             withStateLock {
                 guard self.activeSession === active, !active.isFinishing else { return }
                 source.stateMachine.observe(
@@ -514,22 +573,26 @@ final class MediaPlaybackCoordinator {
     private final class ActiveSession {
         let handle: MediaPlaybackSessionHandle
         let ownedSources: [OwnedSource]
+        let selectionContext: MediaPlaybackSelectionContext
         var isFinishing = false
         var outcome: MediaPlaybackOutcome?
 
         init(
             handle: MediaPlaybackSessionHandle,
             ownedSources: [OwnedSource],
+            selectionContext: MediaPlaybackSelectionContext,
             outcome: MediaPlaybackOutcome?
         ) {
             self.handle = handle
             self.ownedSources = ownedSources
+            self.selectionContext = selectionContext
             self.outcome = outcome
         }
     }
 
     private final class OwnedSource {
         let adapter: any MediaPlaybackAdapter
+        let selectionContext: MediaPlaybackSelectionContext
         var stateMachine: MediaPlaybackSessionStateMachine
 
         var handleSourceIdentifier: String {
@@ -538,9 +601,11 @@ final class MediaPlaybackCoordinator {
 
         init(
             adapter: any MediaPlaybackAdapter,
+            selectionContext: MediaPlaybackSelectionContext,
             stateMachine: MediaPlaybackSessionStateMachine
         ) {
             self.adapter = adapter
+            self.selectionContext = selectionContext
             self.stateMachine = stateMachine
         }
     }
@@ -644,20 +709,45 @@ final class SpotifyMediaPlaybackAdapter: MediaPlaybackAdapter {
     }
 
     func pause(expectedSourceIdentifier: String, before deadline: Date) -> MediaPlaybackSnapshot? {
-        guard Date() < deadline else { return nil }
+        let result = pause(
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            selectionContext: MediaPlaybackSelectionContext(
+                frontmostBundleIdentifier: nil,
+                trigger: "legacy"
+            ),
+            before: deadline
+        )
+        return result.snapshot
+    }
+
+    func pause(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> MediaPlaybackPauseResult {
+        guard Date() < deadline else {
+            return .notIssued(snapshot: nil, reason: "deadline_before_command")
+        }
         let current = inspect()
         guard Date() < deadline,
               current.sourceIdentifier == expectedSourceIdentifier,
-              current.state == .playing,
-              executeCommand("tell application id \"com.spotify.client\" to pause") else {
-            return current
+              current.state == .playing else {
+            return .notIssued(snapshot: current, reason: "preflight_not_playing")
         }
-        return pollForConfirmedSnapshot(
+        guard executeCommand("tell application id \"com.spotify.client\" to pause") else {
+            return .issuedUnconfirmed(snapshot: current, reason: "action_failed")
+        }
+        let confirmed = pollForConfirmedSnapshot(
             inspect: inspect,
             expectedSourceIdentifier: expectedSourceIdentifier,
             expectedState: .paused,
             timeout: max(0, deadline.timeIntervalSinceNow)
         )
+        guard confirmed.sourceIdentifier == expectedSourceIdentifier,
+              confirmed.state == .paused else {
+            return .issuedUnconfirmed(snapshot: confirmed, reason: "confirmation_timeout")
+        }
+        return .confirmed(confirmed)
     }
 
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot? {
@@ -718,92 +808,240 @@ final class SpotifyMediaPlaybackAdapter: MediaPlaybackAdapter {
 final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
     let provider: MediaPlaybackProvider = .youtubeChrome
     private let logger = Logger(subsystem: "app.blitztext.mac", category: "MediaPlayback.Chrome")
+    private let locatedControlLock = NSLock()
+    private var locatedControlCache: (context: MediaPlaybackSelectionContext, control: LocatedControl)?
 
     func inspect() -> MediaPlaybackSnapshot {
-        guard let located = locateControl() else {
+        inspect(
+            selectionContext: MediaPlaybackSelectionContext(
+                frontmostBundleIdentifier: nil,
+                trigger: "legacy"
+            )
+        )
+    }
+
+    func inspect(selectionContext: MediaPlaybackSelectionContext) -> MediaPlaybackSnapshot {
+        guard let located = locateControl(selectionContext: selectionContext, before: Date().addingTimeInterval(0.12)) else {
+            clearLocatedControlCache()
             return snapshot(sourceIdentifier: nil, state: .unknown)
         }
+        storeLocatedControl(located, context: selectionContext)
         return located.snapshot
     }
 
     func pause(expectedSourceIdentifier: String, before deadline: Date) -> MediaPlaybackSnapshot? {
-        guard Date() < deadline,
-              let located = locateControl(),
-              located.snapshot.sourceIdentifier == expectedSourceIdentifier,
-              located.snapshot.state == .playing,
-              Date() < deadline,
-              press(located.actionButton) else {
-            return locateControl()?.snapshot
-        }
-        return pollForConfirmedSnapshot(
-            inspect: inspect,
+        pause(
             expectedSourceIdentifier: expectedSourceIdentifier,
-            expectedState: .paused,
-            timeout: max(0, deadline.timeIntervalSinceNow)
+            selectionContext: MediaPlaybackSelectionContext(
+                frontmostBundleIdentifier: nil,
+                trigger: "legacy"
+            ),
+            before: deadline
+        ).snapshot
+    }
+
+    func pause(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> MediaPlaybackPauseResult {
+        let cachedLocated = takeCachedLocatedControl(
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            selectionContext: selectionContext,
+            expectedState: .playing,
+            expectedIntent: .pause
         )
+        let located = cachedLocated ?? locateControl(selectionContext: selectionContext, before: deadline)
+        guard Date() < deadline,
+              let located,
+              located.snapshot.sourceIdentifier == expectedSourceIdentifier,
+              located.snapshot.state == .playing else {
+            let snapshot = inspect(selectionContext: selectionContext)
+            let reason = Date() >= deadline ? "deadline_before_command" : "preflight_not_playing"
+            return .notIssued(snapshot: snapshot, reason: reason)
+        }
+        guard Date() < deadline else {
+            return .notIssued(snapshot: located.snapshot, reason: "deadline_before_command")
+        }
+        guard actionIntent(of: located.actionButton) == .pause,
+              isSameTarget(located) else {
+            let snapshot = isSameTarget(located)
+                ? snapshot(sourceIdentifier: expectedSourceIdentifier, state: .unknown)
+                : snapshot(sourceIdentifier: nil, state: .unknown)
+            return .notIssued(snapshot: snapshot, reason: "target_changed")
+        }
+        guard press(located.actionButton) else {
+            return .issuedUnconfirmed(snapshot: located.snapshot, reason: "action_failed")
+        }
+
+        let confirmed = pollForConfirmedAction(
+            located: located,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedIntent: .play,
+            resultingState: .paused,
+            before: deadline
+        )
+        guard confirmed.sourceIdentifier == expectedSourceIdentifier,
+              confirmed.state == .paused else {
+            return .issuedUnconfirmed(snapshot: confirmed, reason: "confirmation_timeout")
+        }
+        return .confirmed(confirmed)
     }
 
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot? {
-        guard let located = locateControl(),
-              located.snapshot.sourceIdentifier == expectedSourceIdentifier,
-              located.snapshot.state == .paused,
-              press(located.actionButton) else {
-            return locateControl()?.snapshot
-        }
-        return pollForConfirmedSnapshot(
-            inspect: inspect,
+        resume(
             expectedSourceIdentifier: expectedSourceIdentifier,
-            expectedState: .playing,
-            timeout: MediaPlaybackTiming.restorationBudget
+            selectionContext: MediaPlaybackSelectionContext(
+                frontmostBundleIdentifier: nil,
+                trigger: "legacy"
+            )
         )
     }
 
-    private func locateControl() -> LocatedControl? {
+    func resume(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext
+    ) -> MediaPlaybackSnapshot? {
+        // Re-resolve the restoration control after the pause. Chrome can
+        // accept AXPress on the pre-pause button reference while leaving that
+        // reference stale for the opposite action, so restoration must use a
+        // fresh target-bound lookup before issuing Play.
+        clearLocatedControlCache()
+        let located = locateControl(
+            selectionContext: selectionContext,
+            before: Date().addingTimeInterval(MediaPlaybackTiming.restorationBudget)
+        )
+        guard let located,
+              located.snapshot.sourceIdentifier == expectedSourceIdentifier,
+              located.snapshot.state == .paused,
+              actionIntent(of: located.actionButton) == .play,
+              isSameTarget(located) else {
+            return inspect(selectionContext: selectionContext)
+        }
+        guard press(located.actionButton) else {
+            return inspect(selectionContext: selectionContext)
+        }
+        return pollForConfirmedAction(
+            located: located,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedIntent: .pause,
+            resultingState: .playing,
+            before: Date().addingTimeInterval(MediaPlaybackTiming.restorationBudget)
+        )
+    }
+
+    /// Chrome's AX tree is expensive to traverse and can return the old
+    /// control state for a short period after AXPress. Once a validated
+    /// control has been pressed, confirm the state on that same target instead
+    /// of repeatedly searching every browser window. This keeps the fixed
+    /// preparation budget usable without accepting an uncorrelated snapshot.
+    private func pollForConfirmedAction(
+        located: LocatedControl,
+        expectedSourceIdentifier: String,
+        expectedIntent: ChromeYouTubeAccessibility.ActionIntent,
+        resultingState: MediaPlaybackState,
+        before deadline: Date
+    ) -> MediaPlaybackSnapshot {
+        var latest = located.snapshot
+
+        while true {
+            guard isSameTarget(located) else {
+                return snapshot(sourceIdentifier: nil, state: .unknown)
+            }
+
+            if actionIntent(of: located.actionButton) == expectedIntent {
+                return snapshot(sourceIdentifier: expectedSourceIdentifier, state: resultingState)
+            }
+
+            guard Date() < deadline else { return latest }
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { return latest }
+            Thread.sleep(forTimeInterval: min(MediaPlaybackTiming.confirmationPollInterval, remaining))
+            latest = located.snapshot
+        }
+    }
+
+    private func locateControl(
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> LocatedControl? {
         guard AXIsProcessTrusted() else {
             if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty {
                 logger.info("Chrome YouTube Accessibility inspection unavailable")
             }
             return nil
         }
-        guard let chrome = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome")
-            .first else {
+        let applications = NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome")
+        guard applications.count == 1, let chrome = applications.first else {
             return nil
         }
 
         let application = AXUIElementCreateApplication(chrome.processIdentifier)
-        guard let window = focusedWindow(for: application) else { return nil }
-        let players = findPlayers(
-            in: window,
-            inheritedURL: nil,
-            processIdentifier: chrome.processIdentifier,
-            depth: 0
+        let windows = candidateWindows(
+            for: application,
+            isForegroundChrome: selectionContext.frontmostBundleIdentifier == "com.google.Chrome"
         )
-        guard players.count == 1, let player = players.first else { return nil }
+        logger.info(
+            "Chrome locator start foreground=\(selectionContext.frontmostBundleIdentifier == "com.google.Chrome", privacy: .public) trigger=\(selectionContext.trigger, privacy: .public) windows=\(windows.count, privacy: .public)"
+        )
+        var controls: [LocatedControl] = []
 
-        let pauseButton = findActionButton(in: player.element, intent: .pause, depth: 0)
-        let playButton = findActionButton(in: player.element, intent: .play, depth: 0)
-        guard !(pauseButton != nil && playButton != nil) else {
-            // Both controls being exposed at once is ambiguous. Do not guess
-            // which one represents the current player state.
+        for window in windows {
+            guard Date() < deadline else { return nil }
+            let windowIdentifier = elementIdentifier(window)
+            var traversal = AXTraversalState(deadline: deadline, maximumNodes: 700)
+            let players = findPlayers(
+                in: window,
+                inheritedURL: nil,
+                documentIdentifier: nil,
+                documentElement: nil,
+                windowIdentifier: windowIdentifier,
+                processIdentifier: chrome.processIdentifier,
+                traversal: &traversal
+            )
+            logger.info(
+                "Chrome locator window players=\(players.count, privacy: .public) visited=\(traversal.visitedNodes, privacy: .public) incomplete=\(traversal.isIncomplete, privacy: .public)"
+            )
+            guard !traversal.isIncomplete else { return nil }
+
+            for player in players {
+                guard Date() < deadline else { return nil }
+                var actionTraversal = AXTraversalState(deadline: deadline, maximumNodes: 350)
+                let actions = findActionButtons(
+                    in: player.element,
+                    depth: 0,
+                    inheritedHidden: false,
+                    traversal: &actionTraversal
+                )
+                logger.info(
+                    "Chrome locator player actions=\(actions.count, privacy: .public) visited=\(actionTraversal.visitedNodes, privacy: .public) incomplete=\(actionTraversal.isIncomplete, privacy: .public)"
+                )
+                guard !actionTraversal.isIncomplete else { return nil }
+                guard let control = locatedControl(for: player, actions: actions) else {
+                    logger.info("Chrome locator player control=ambiguous_or_missing")
+                    continue
+                }
+                controls.append(control)
+            }
+        }
+
+        let playing = controls.filter { $0.snapshot.state == .playing }
+        if playing.count == 1 {
+            logger.info("Chrome locator result=playing_unique controls=\(controls.count, privacy: .public)")
+            return playing[0]
+        }
+        if playing.count > 1 {
+            logger.info("Chrome locator result=playing_ambiguous controls=\(controls.count, privacy: .public)")
             return nil
         }
-        let state: MediaPlaybackState
-        let actionButton: AXUIElement
 
-        if let pauseButton {
-            state = .playing
-            actionButton = pauseButton
-        } else if let playButton {
-            state = .paused
-            actionButton = playButton
-        } else {
-            return nil
+        let paused = controls.filter { $0.snapshot.state == .paused }
+        if paused.count == 1 {
+            logger.info("Chrome locator result=paused_unique controls=\(controls.count, privacy: .public)")
+            return paused[0]
         }
-
-        return LocatedControl(
-            snapshot: snapshot(sourceIdentifier: player.sourceIdentifier, state: state),
-            actionButton: actionButton
-        )
+        logger.info("Chrome locator result=paused_ambiguous_or_missing controls=\(controls.count, privacy: .public)")
+        return nil
     }
 
     private func focusedWindow(for application: AXUIElement) -> AXUIElement? {
@@ -816,75 +1054,159 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
         return (value as! AXUIElement)
     }
 
+    private func candidateWindows(
+        for application: AXUIElement,
+        isForegroundChrome: Bool
+    ) -> [AXUIElement] {
+        let focused = focusedWindow(for: application)
+        let main = elementAttribute(application, kAXMainWindowAttribute as CFString)
+        let listed = elementArrayAttribute(application, kAXWindowsAttribute as CFString)
+        let all = uniqueElements([focused, main].compactMap { $0 } + listed)
+
+        if isForegroundChrome {
+            if let focused { return [focused] }
+            if all.count == 1, let onlyWindow = all.first { return [onlyWindow] }
+            return []
+        }
+
+        return all
+    }
+
+    private func elementAttribute(_ element: AXUIElement, _ attribute: CFString) -> AXUIElement? {
+        guard let value = attributeValue(element, attribute),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (value as! AXUIElement)
+    }
+
+    private func elementArrayAttribute(_ element: AXUIElement, _ attribute: CFString) -> [AXUIElement] {
+        guard let value = attributeValue(element, attribute),
+              let elements = value as? [AXUIElement] else {
+            return []
+        }
+        return elements
+    }
+
+    private func uniqueElements(_ elements: [AXUIElement]) -> [AXUIElement] {
+        var seen = Set<String>()
+        return elements.filter { seen.insert(elementIdentifier($0)).inserted }
+    }
+
+    private func elementIdentifier(_ element: AXUIElement) -> String {
+        String(CFHash(element))
+    }
+
     private func findPlayers(
         in element: AXUIElement,
         inheritedURL: String?,
+        documentIdentifier: String?,
+        documentElement: AXUIElement?,
+        windowIdentifier: String,
         processIdentifier: pid_t,
-        depth: Int
+        traversal: inout AXTraversalState
     ) -> [LocatedPlayer] {
-        guard depth < 32 else { return [] }
+        guard traversal.enter() else { return [] }
 
         let url = stringAttribute(element, kAXURLAttribute as CFString) ?? inheritedURL
+        let role = stringAttribute(element, kAXRoleAttribute as CFString)?.lowercased()
+        let currentDocumentIdentifier = role == "axwebarea"
+            ? elementIdentifier(element)
+            : documentIdentifier
+        let currentDocumentElement = role == "axwebarea" ? element : documentElement
         let identifier = stringAttribute(element, kAXIdentifierAttribute as CFString)
         let description = stringAttribute(element, kAXDescriptionAttribute as CFString)
         if identifier == "movie_player" || description?.localizedLowercase.contains("youtube-videoplayer") == true {
-            guard let url, Self.isYouTubeURL(url) else { return [] }
+            guard let url, ChromeYouTubeAccessibility.isYouTubeURL(url) else { return [] }
+            let documentToken = currentDocumentIdentifier ?? windowIdentifier
             return [LocatedPlayer(
                 element: element,
-                sourceIdentifier: "chrome:\(processIdentifier):\(url)"
+                playerIdentifier: elementIdentifier(element),
+                sourceURL: url,
+                documentElement: currentDocumentElement,
+                sourceIdentifier: "chrome:\(processIdentifier):window:\(windowIdentifier):document:\(documentToken):player:\(elementIdentifier(element)):url:\(url)"
             )]
         }
 
         var players: [LocatedPlayer] = []
-        for child in children(of: element) {
+        for child in children(of: element, traversal: &traversal) {
             players.append(contentsOf: findPlayers(
                 in: child,
                 inheritedURL: url,
+                documentIdentifier: currentDocumentIdentifier,
+                documentElement: currentDocumentElement,
+                windowIdentifier: windowIdentifier,
                 processIdentifier: processIdentifier,
-                depth: depth + 1
+                traversal: &traversal
             ))
-            if players.count > 1 { break }
+            // Chrome exposes the active tab as the document below each
+            // candidate window. Once that document yields one YouTube player,
+            // continuing through the rest of the large AX tree only burns the
+            // preparation budget. Ambiguity across windows is still handled
+            // by the aggregate control selection below.
+            if !players.isEmpty || traversal.isIncomplete { break }
         }
         return players
     }
 
-    private enum ActionIntent {
-        case pause
-        case play
-    }
-
-    private func findActionButton(
+    private func findActionButtons(
         in element: AXUIElement,
-        intent: ActionIntent,
-        depth: Int
-    ) -> AXUIElement? {
-        guard depth < 24 else { return nil }
+        depth: Int,
+        inheritedHidden: Bool,
+        traversal: inout AXTraversalState
+    ) -> [ActionCandidate] {
+        guard depth < 24, traversal.enter() else { return [] }
 
+        let hidden = inheritedHidden || boolAttribute(element, kAXHiddenAttribute as CFString) == true
         let role = stringAttribute(element, kAXRoleAttribute as CFString)?.lowercased() ?? ""
-        if (role == "axbutton" || role == "button") && isUsableActionButton(element) {
-            let label = [
-                stringAttribute(element, kAXDescriptionAttribute as CFString),
-                stringAttribute(element, kAXTitleAttribute as CFString),
-                stringAttribute(element, kAXValueAttribute as CFString)
-            ]
-                .compactMap { $0 }
-                .joined(separator: " ")
-                .localizedLowercase
+        var actions: [ActionCandidate] = []
 
-            switch intent {
-            case .pause where Self.isPauseLabel(label):
-                return element
-            case .play where Self.isPlayLabel(label):
-                return element
-            default:
-                break
+        if (role == "axbutton" || role == "button"),
+           !hidden,
+           isUsableActionButton(element),
+           hasPressAction(element) {
+            if let intent = actionIntent(of: element) {
+                actions.append(ActionCandidate(element: element, intent: intent))
             }
         }
 
-        for child in children(of: element) {
-            if let button = findActionButton(in: child, intent: intent, depth: depth + 1) {
-                return button
-            }
+        for child in children(of: element, traversal: &traversal) {
+            actions.append(contentsOf: findActionButtons(
+                in: child,
+                depth: depth + 1,
+                inheritedHidden: hidden,
+                traversal: &traversal
+            ))
+            if actions.count >= 8 || traversal.isIncomplete { break }
+        }
+        return actions
+    }
+
+    private func locatedControl(
+        for player: LocatedPlayer,
+        actions: [ActionCandidate]
+    ) -> LocatedControl? {
+        let pauseButtons = actions.filter { $0.intent == .pause }
+        let playButtons = actions.filter { $0.intent == .play }
+
+        guard !(pauseButtons.isEmpty && playButtons.isEmpty),
+              !(pauseButtons.count > 0 && playButtons.count > 0) else {
+            return nil
+        }
+
+        if pauseButtons.count == 1, let pauseButton = pauseButtons.first {
+            return LocatedControl(
+                player: player,
+                snapshot: snapshot(sourceIdentifier: player.sourceIdentifier, state: .playing),
+                actionButton: pauseButton.element
+            )
+        }
+        if playButtons.count == 1, let playButton = playButtons.first {
+            return LocatedControl(
+                player: player,
+                snapshot: snapshot(sourceIdentifier: player.sourceIdentifier, state: .paused),
+                actionButton: playButton.element
+            )
         }
         return nil
     }
@@ -894,6 +1216,85 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
         if result != .success {
             logger.info("Chrome YouTube Accessibility action unavailable")
             return false
+        }
+        return true
+    }
+
+    private func storeLocatedControl(
+        _ control: LocatedControl,
+        context: MediaPlaybackSelectionContext
+    ) {
+        locatedControlLock.lock()
+        locatedControlCache = (context: context, control: control)
+        locatedControlLock.unlock()
+    }
+
+    private func clearLocatedControlCache() {
+        locatedControlLock.lock()
+        locatedControlCache = nil
+        locatedControlLock.unlock()
+    }
+
+    private func takeCachedLocatedControl(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        expectedState: MediaPlaybackState,
+        expectedIntent: ChromeYouTubeAccessibility.ActionIntent
+    ) -> LocatedControl? {
+        locatedControlLock.lock()
+        let cached = locatedControlCache
+        locatedControlCache = nil
+        locatedControlLock.unlock()
+
+        guard let cached,
+              cached.context == selectionContext,
+              cached.control.snapshot.sourceIdentifier == expectedSourceIdentifier,
+              cached.control.snapshot.state == expectedState,
+              actionIntent(of: cached.control.actionButton) == expectedIntent,
+              isSameTarget(cached.control) else {
+            return nil
+        }
+        return cached.control
+    }
+
+    private func actionIntent(of element: AXUIElement) -> ChromeYouTubeAccessibility.ActionIntent? {
+        let intents = [
+            stringAttribute(element, kAXDescriptionAttribute as CFString),
+            stringAttribute(element, kAXTitleAttribute as CFString),
+            stringAttribute(element, kAXValueAttribute as CFString),
+        ]
+            .compactMap { $0 }
+            .compactMap { ChromeYouTubeAccessibility.actionIntent(for: $0) }
+
+        let uniqueIntents = Set(intents)
+        guard uniqueIntents.count == 1 else { return nil }
+        return uniqueIntents.first
+    }
+
+    private func isSameTarget(_ located: LocatedControl) -> Bool {
+        guard elementIdentifier(located.player.element) == located.player.playerIdentifier else {
+            return false
+        }
+
+        let identifier = stringAttribute(
+            located.player.element,
+            kAXIdentifierAttribute as CFString
+        )
+        let description = stringAttribute(
+            located.player.element,
+            kAXDescriptionAttribute as CFString
+        )
+        guard identifier == "movie_player"
+                || description?.localizedLowercase.contains("youtube-videoplayer") == true else {
+            return false
+        }
+
+        let playerURL = stringAttribute(located.player.element, kAXURLAttribute as CFString)
+        let documentURL = located.player.documentElement.flatMap {
+            stringAttribute($0, kAXURLAttribute as CFString)
+        }
+        if let currentURL = playerURL ?? documentURL {
+            return currentURL == located.player.sourceURL
         }
         return true
     }
@@ -908,11 +1309,27 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
         return true
     }
 
-    private func children(of element: AXUIElement) -> [AXUIElement] {
+    private func hasPressAction(_ element: AXUIElement) -> Bool {
+        var value: CFArray?
+        guard AXUIElementCopyActionNames(element, &value) == .success,
+              let actions = value as? [String] else {
+            return false
+        }
+        return actions.contains(kAXPressAction as String)
+    }
+
+    private func children(
+        of element: AXUIElement,
+        traversal: inout AXTraversalState
+    ) -> [AXUIElement] {
         guard let value = attributeValue(element, kAXChildrenAttribute as CFString) else {
             return []
         }
-        return value as? [AXUIElement] ?? []
+        guard let children = value as? [AXUIElement] else {
+            traversal.isIncomplete = true
+            return []
+        }
+        return children
     }
 
     private func stringAttribute(_ element: AXUIElement, _ attribute: CFString) -> String? {
@@ -942,30 +1359,40 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
 
     private struct LocatedPlayer {
         let element: AXUIElement
+        let playerIdentifier: String
+        let sourceURL: String
+        let documentElement: AXUIElement?
         let sourceIdentifier: String
     }
 
     private struct LocatedControl {
+        let player: LocatedPlayer
         let snapshot: MediaPlaybackSnapshot
         let actionButton: AXUIElement
     }
 
-    private static func isYouTubeURL(_ value: String) -> Bool {
-        let lowercased = value.localizedLowercase
-        return lowercased.contains("youtube.com/") || lowercased.contains("youtu.be/")
+    private struct ActionCandidate {
+        let element: AXUIElement
+        let intent: ChromeYouTubeAccessibility.ActionIntent
     }
+}
 
-    private static func isPauseLabel(_ label: String) -> Bool {
-        label.contains("pause") || label.contains("pausieren")
-    }
+private struct AXTraversalState {
+    let deadline: Date
+    let maximumNodes: Int
+    private(set) var visitedNodes = 0
+    var isIncomplete = false
 
-    private static func isPlayLabel(_ label: String) -> Bool {
-        guard !label.contains("autoplay") else { return false }
-        return label == "play"
-            || label.hasPrefix("play ")
-            || label.contains("wiedergeben")
-            || label.contains("wiedergabe")
-            || label.contains("abspielen")
-            || label.contains("fortsetzen")
+    mutating func enter() -> Bool {
+        guard !isIncomplete, Date() < deadline else {
+            isIncomplete = true
+            return false
+        }
+        visitedNodes += 1
+        guard visitedNodes <= maximumNodes else {
+            isIncomplete = true
+            return false
+        }
+        return true
     }
 }

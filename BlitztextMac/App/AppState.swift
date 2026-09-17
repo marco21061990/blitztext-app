@@ -37,11 +37,14 @@ final class AppState {
     var mediaPlaybackStatus: MediaPlaybackStatus = .idle
     var onMenuBarStatusChange: ((MenuBarStatus) -> Void)?
     var onRecordingOverlayStateChange: ((RecordingOverlayState) -> Void)?
+    var onWorkflowPresentationRequested: (() -> Void)?
     private(set) var isPreparingWorkflow = false
     private var activeLaunchSource: WorkflowLaunchSource = .manual
     private var activeMediaSessionID: UUID?
+    private var activeMediaSelectionContext: MediaPlaybackSelectionContext?
     private var activePasteTarget: PasteTarget?
     private var lastPopoverPasteTarget: PasteTarget?
+    private var lastPopoverMediaSelectionContext: MediaPlaybackSelectionContext?
     private var menuBarStatusResetTask: Task<Void, Never>?
     private var workflowCleanupTask: Task<Void, Never>?
     private var mediaPlaybackStatusResetTask: Task<Void, Never>?
@@ -245,7 +248,11 @@ final class AppState {
 
     // MARK: - Workflow Management
 
-    func startWorkflow(_ type: WorkflowType, source: WorkflowLaunchSource = .manual) {
+    func startWorkflow(
+        _ type: WorkflowType,
+        source: WorkflowLaunchSource = .manual,
+        presentWhenReady: Bool = false
+    ) {
         guard isWorkflowAvailable(type) else {
             if source == .manual {
                 page = .settings
@@ -261,6 +268,22 @@ final class AppState {
         autoPasteStatusText = nil
         autoPasteStatusIsVisible = false
         activeLaunchSource = source
+        let shouldPresentWhenReady = presentWhenReady
+            || (source == .manual && isPopoverShown)
+        let shouldWaitForPopoverDismissal = shouldPresentWhenReady && isPopoverShown
+        if shouldWaitForPopoverDismissal {
+            isPopoverShown = false
+            NotificationCenter.default.post(name: .dismissPopover, object: nil)
+        }
+        let selectionContext: MediaPlaybackSelectionContext
+        switch source {
+        case .manual:
+            selectionContext = lastPopoverMediaSelectionContext
+                ?? mediaPlaybackCoordinator.captureSelectionContext(trigger: "manual")
+        case .hotkeyBackground:
+            selectionContext = mediaPlaybackCoordinator.captureSelectionContext(trigger: "hotkey")
+        }
+        activeMediaSelectionContext = selectionContext
         activePasteTarget = capturePasteTarget(for: source)
 
         let workflow: any Workflow
@@ -314,7 +337,21 @@ final class AppState {
         isPreparingWorkflow = true
         page = source.presentsWorkflowPage ? .workflow : .main
         notifyRecordingOverlayStateChanged()
-        prepareAndStartWorkflow(workflow)
+        if shouldWaitForPopoverDismissal {
+            DispatchQueue.main.async { [weak self] in
+                self?.prepareAndStartWorkflow(
+                    workflow,
+                    selectionContext: selectionContext,
+                    presentWhenReady: shouldPresentWhenReady
+                )
+            }
+        } else {
+            prepareAndStartWorkflow(
+                workflow,
+                selectionContext: selectionContext,
+                presentWhenReady: shouldPresentWhenReady
+            )
+        }
     }
 
     func isWorkflowAvailable(_ type: WorkflowType) -> Bool {
@@ -360,6 +397,7 @@ final class AppState {
         isPreparingWorkflow = false
         activeWorkflow = nil
         workflow?.reset()
+        activeMediaSelectionContext = nil
         activePasteTarget = nil
         activeLaunchSource = .manual
         menuBarStatusResetTask?.cancel()
@@ -383,14 +421,20 @@ final class AppState {
         isPreparingWorkflow = false
         activeWorkflow = nil
         workflow?.reset()
+        activeMediaSelectionContext = nil
         activePasteTarget = nil
         activeLaunchSource = .manual
     }
 
-    private func prepareAndStartWorkflow(_ workflow: any Workflow) {
+    private func prepareAndStartWorkflow(
+        _ workflow: any Workflow,
+        selectionContext: MediaPlaybackSelectionContext,
+        presentWhenReady: Bool
+    ) {
         let workflowID = ObjectIdentifier(workflow)
         mediaPlaybackCoordinator.prepareForRecording(
-            enabled: appSettings.pauseMediaDuringDictation
+            enabled: appSettings.pauseMediaDuringDictation,
+            selectionContext: selectionContext
         ) { [weak self] handle in
             guard let self,
                   let activeWorkflow = self.activeWorkflow,
@@ -419,6 +463,12 @@ final class AppState {
                 guard let handle else { return }
                 self.mediaPlaybackCoordinator.finish(handle, outcome: .failed)
                 self.activeMediaSessionID = nil
+            }
+
+            if presentWhenReady,
+               self.activeWorkflow?.phase.isActive == true {
+                self.page = .workflow
+                self.onWorkflowPresentationRequested?()
             }
         }
     }
@@ -546,6 +596,9 @@ final class AppState {
 
     func prepareForPopoverPresentation() {
         lastPopoverPasteTarget = captureCurrentFrontmostApp()
+        lastPopoverMediaSelectionContext = mediaPlaybackCoordinator.captureSelectionContext(
+            trigger: "popover"
+        )
         if let activeWorkflow, activeWorkflow.phase.isActive {
             page = .workflow
         } else if shouldShowOnboarding {

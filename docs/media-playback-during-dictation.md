@@ -247,12 +247,34 @@ macOS:
   `movie_player` with an explicit `Pause` control at the current foreground
   tab. The coordinator's real end-to-end pause/restore sequence remains
   pending manual app acceptance.
+- 2026-09-17: a controlled adapter run reproduced that Chrome returns a
+  successful `AXPress` from a background Blitztext process while the YouTube
+  player keeps playing. The same target-bound operation confirmed pause and
+  resume when Chrome remained foreground. The app now defers its workflow
+  popover presentation until media preparation has completed, so the initial
+  Chrome command does not run behind Blitztext's own UI.
 - 2026-09-17: the running app reproduced the simultaneous-source edge case:
   Spotify and YouTube both logged as `playing`, after which the previous
   exactly-one-source rule intentionally issued no pause. The coordinator was
   changed to pause and independently own every fully identified playing source
   when no supported player is frontmost; a failed confirmation remains
   fail-open for that source.
+- 2026-09-17: the GPT-6 Pro read-only review of PR #5 identified the missing
+  start-context handoff, the broad Chrome action matching, and the risk of
+  adopting a paused state without an issued command. The local follow-up now
+  captures the pre-popover selection context, uses strict YouTube host and
+  action classification with a required AXPress action, and requires an
+  explicit pause result before creating restoration ownership.
+- 2026-09-17: the focused session, coordinator, and Chrome classification tests
+  passed again with full Xcode's macOS SDK. The universal locally signed app was
+  rebuilt and installed at `/Applications/Blitztext.app`; the real app-level
+  pause/restore sequence with a currently playing YouTube video remains open
+  for manual acceptance.
+- 2026-09-17: the real Chrome production adapter was exercised against a
+  currently playing YouTube video. It issued the explicit Accessibility pause,
+  confirmed the same source as paused, and restored it to playing. This proves
+  the current adapter transport and confirmation path; the complete Blitztext
+  recording lifecycle and the multi-source manual scenarios remain open.
 
 ## Resuming after context compression
 
@@ -269,7 +291,6 @@ When this task resumes after context compression:
 
 ## Next action
 
-Install or select full Xcode, rerun `./build.sh --debug`, then perform the
-manual Spotify and Chrome acceptance scenarios plus the documented failure and
-hotkey lifecycle cases. Do not mark the feature complete from local tests or a
-successful build alone.
+Perform the manual Spotify and Chrome acceptance scenarios plus the documented
+failure and hotkey lifecycle cases. Do not mark the feature complete from local
+tests, a successful build, or an adapter-only probe alone.

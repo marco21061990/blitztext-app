@@ -31,7 +31,12 @@ struct MediaPlaybackSessionTests {
         guard let handle = state.begin(sourceIdentifier: "spotify:one", initialState: .playing) else {
             throw TestFailure("Expected a playing source to create a session")
         }
-        guard !state.confirmPause(handle, sourceIdentifier: "spotify:one", observedState: .playing) else {
+        guard !state.confirmPause(
+            handle,
+            sourceIdentifier: "spotify:one",
+            observedState: .playing,
+            receipt: receipt(for: handle, sourceIdentifier: "spotify:one")
+        ) else {
             throw TestFailure("A pause must not be owned while the source is still playing")
         }
         guard !state.shouldRestore(handle, sourceIdentifier: "spotify:one", currentState: .paused) else {
@@ -44,7 +49,12 @@ struct MediaPlaybackSessionTests {
         let handle = try requireHandle(
             state.begin(sourceIdentifier: "spotify:one", initialState: .playing)
         )
-        guard state.confirmPause(handle, sourceIdentifier: "spotify:one", observedState: .paused) else {
+        guard state.confirmPause(
+            handle,
+            sourceIdentifier: "spotify:one",
+            observedState: .paused,
+            receipt: receipt(for: handle, sourceIdentifier: "spotify:one")
+        ) else {
             throw TestFailure("Expected the paused result to confirm ownership")
         }
         guard state.shouldRestore(handle, sourceIdentifier: "spotify:one", currentState: .paused) else {
@@ -60,7 +70,12 @@ struct MediaPlaybackSessionTests {
         let handle = try requireHandle(
             state.begin(sourceIdentifier: "spotify:one", initialState: .playing)
         )
-        _ = state.confirmPause(handle, sourceIdentifier: "spotify:one", observedState: .paused)
+        _ = state.confirmPause(
+            handle,
+            sourceIdentifier: "spotify:one",
+            observedState: .paused,
+            receipt: receipt(for: handle, sourceIdentifier: "spotify:one")
+        )
         state.observe(handle, sourceIdentifier: "spotify:one", state: .playing)
         state.observe(handle, sourceIdentifier: "spotify:one", state: .paused)
 
@@ -74,7 +89,12 @@ struct MediaPlaybackSessionTests {
         let handle = try requireHandle(
             state.begin(sourceIdentifier: "youtube:one", initialState: .playing)
         )
-        _ = state.confirmPause(handle, sourceIdentifier: "youtube:one", observedState: .paused)
+        _ = state.confirmPause(
+            handle,
+            sourceIdentifier: "youtube:one",
+            observedState: .paused,
+            receipt: receipt(for: handle, sourceIdentifier: "youtube:one")
+        )
         state.observe(handle, sourceIdentifier: "youtube:two", state: .paused)
 
         guard !state.shouldRestore(handle, sourceIdentifier: "youtube:two", currentState: .paused) else {
@@ -92,10 +112,20 @@ struct MediaPlaybackSessionTests {
         let current = try requireHandle(
             state.begin(sourceIdentifier: "spotify:new", initialState: .playing)
         )
-        guard !state.confirmPause(stale, sourceIdentifier: "spotify:old", observedState: .paused) else {
+        guard !state.confirmPause(
+            stale,
+            sourceIdentifier: "spotify:old",
+            observedState: .paused,
+            receipt: receipt(for: stale, sourceIdentifier: "spotify:old")
+        ) else {
             throw TestFailure("A stale pause callback must be ignored")
         }
-        guard state.confirmPause(current, sourceIdentifier: "spotify:new", observedState: .paused) else {
+        guard state.confirmPause(
+            current,
+            sourceIdentifier: "spotify:new",
+            observedState: .paused,
+            receipt: receipt(for: current, sourceIdentifier: "spotify:new")
+        ) else {
             throw TestFailure("The current session must remain controllable")
         }
     }
@@ -114,6 +144,16 @@ struct MediaPlaybackSessionTests {
     private static func requireHandle(_ handle: MediaPlaybackSessionHandle?) throws -> MediaPlaybackSessionHandle {
         guard let handle else { throw TestFailure("Expected a media session handle") }
         return handle
+    }
+
+    private static func receipt(
+        for handle: MediaPlaybackSessionHandle,
+        sourceIdentifier: String
+    ) -> MediaPlaybackCommandReceipt {
+        MediaPlaybackCommandReceipt(
+            sessionID: handle.id,
+            sourceIdentifier: sourceIdentifier
+        )
     }
 }
 

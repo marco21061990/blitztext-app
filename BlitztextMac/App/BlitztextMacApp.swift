@@ -48,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         appState.onRecordingOverlayStateChange = { [weak self] state in
             self?.recordingOverlayController.update(with: state)
         }
+        appState.onWorkflowPresentationRequested = { [weak self] in
+            self?.showPopover()
+        }
         appState.hotkeyService.start()
 
         // Listen for popover dismiss requests (from auto-paste)
@@ -101,9 +104,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                (active.phase.isActive || appState.isPreparingWorkflow) {
                 appState.stopCurrentWorkflow()
             } else {
-                appState.prepareForPopoverPresentation()
-                appState.startWorkflow(type, source: .manual)
-                showPopover()
+                // Keep Chrome as the foreground application while its
+                // Accessibility control is pressed. Showing Blitztext's
+                // popover first makes Chrome acknowledge AXPress without
+                // dispatching the YouTube click reliably.
+                if !popover.isShown {
+                    appState.prepareForPopoverPresentation()
+                }
+                appState.startWorkflow(
+                    type,
+                    source: .manual,
+                    presentWhenReady: true
+                )
             }
         }
     }

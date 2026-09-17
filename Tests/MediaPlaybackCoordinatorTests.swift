@@ -10,6 +10,8 @@ struct MediaPlaybackCoordinatorTests {
         try assertDisabledSettingSkipsMediaControl()
         try assertMultiplePlayingSourcesPauseAndRestore()
         try assertUnconfirmedSourceDoesNotBlockConfirmedSource()
+        try assertPreexistingPauseIsNotAdopted()
+        try assertSelectionContextIsCapturedBeforeAsyncWork()
         try assertFrontmostSupportedSourceWins()
         try assertFrontmostSourceIsNotBlockedBySlowBackgroundInspection()
         try assertStatusLifecycleIsObservable()
@@ -247,6 +249,67 @@ struct MediaPlaybackCoordinatorTests {
         guard unconfirmed.resumeCount == 0 else {
             throw TestFailure("An unconfirmed source must never be resumed")
         }
+    }
+
+    private static func assertPreexistingPauseIsNotAdopted() throws {
+        let adapter = MockMediaPlaybackAdapter(
+            provider: .youtubeChrome,
+            state: .playing,
+            sourceIdentifier: "youtube:preexisting-pause",
+            pauseResult: .alreadyPaused
+        )
+        let coordinator = MediaPlaybackCoordinator(
+            adapters: [adapter],
+            frontmostBundleIdentifier: { nil }
+        )
+
+        var callbackReceived = false
+        var handle: MediaPlaybackSessionHandle?
+        coordinator.prepareForRecording(enabled: true) {
+            callbackReceived = true
+            handle = $0
+        }
+        try waitUntil { callbackReceived }
+
+        guard handle == nil, adapter.pauseCount == 0, adapter.resumeCount == 0 else {
+            throw TestFailure("A pause observed before the command must not be adopted as owned")
+        }
+    }
+
+    private static func assertSelectionContextIsCapturedBeforeAsyncWork() throws {
+        let adapter = MockMediaPlaybackAdapter(
+            provider: .youtubeChrome,
+            state: .playing,
+            sourceIdentifier: "youtube:context"
+        )
+        let frontmostLock = NSLock()
+        var frontmostReadCount = 0
+        let coordinator = MediaPlaybackCoordinator(
+            adapters: [adapter],
+            frontmostBundleIdentifier: {
+                frontmostLock.lock()
+                defer { frontmostLock.unlock() }
+                frontmostReadCount += 1
+                return frontmostReadCount == 1 ? "com.google.Chrome" : "com.spotify.client"
+            }
+        )
+
+        var handle: MediaPlaybackSessionHandle?
+        coordinator.prepareForRecording(enabled: true) { handle = $0 }
+        try waitUntil { handle != nil }
+
+        let expectedContext = MediaPlaybackSelectionContext(
+            frontmostBundleIdentifier: "com.google.Chrome",
+            trigger: "coordinator"
+        )
+        guard frontmostReadCount == 1,
+              adapter.selectionContexts.allSatisfy({ $0 == expectedContext }) else {
+            throw TestFailure("Media preparation must use one captured selection context")
+        }
+
+        guard let handle else { throw TestFailure("Expected the captured context to select Chrome") }
+        coordinator.finish(handle, outcome: .successfulPaste)
+        try waitUntil { adapter.resumeCount == 1 }
     }
 
     private static func assertFrontmostSupportedSourceWins() throws {
@@ -513,9 +576,10 @@ struct MediaPlaybackCoordinatorTests {
 }
 
 private final class MockMediaPlaybackAdapter: MediaPlaybackAdapter {
-    enum PauseResult {
+    enum PauseResult: Equatable {
         case confirm
         case unconfirmed
+        case alreadyPaused
     }
 
     let provider: MediaPlaybackProvider
@@ -529,6 +593,7 @@ private final class MockMediaPlaybackAdapter: MediaPlaybackAdapter {
     private var resumeCountValue = 0
     private var inspectCountValue = 0
     private var eventsValue: [String] = []
+    private var selectionContextsValue: [MediaPlaybackSelectionContext] = []
 
     var state: MediaPlaybackState {
         withLock { currentState }
@@ -548,6 +613,10 @@ private final class MockMediaPlaybackAdapter: MediaPlaybackAdapter {
 
     var events: [String] {
         withLock { eventsValue }
+    }
+
+    var selectionContexts: [MediaPlaybackSelectionContext] {
+        withLock { selectionContextsValue }
     }
 
     init(
@@ -574,6 +643,11 @@ private final class MockMediaPlaybackAdapter: MediaPlaybackAdapter {
         }
     }
 
+    func inspect(selectionContext: MediaPlaybackSelectionContext) -> MediaPlaybackSnapshot {
+        withLock { selectionContextsValue.append(selectionContext) }
+        return inspect()
+    }
+
     func pause(expectedSourceIdentifier: String, before deadline: Date) -> MediaPlaybackSnapshot? {
         if pauseDelay > 0 { Thread.sleep(forTimeInterval: pauseDelay) }
         return withLock { () -> MediaPlaybackSnapshot? in
@@ -587,8 +661,32 @@ private final class MockMediaPlaybackAdapter: MediaPlaybackAdapter {
                 return snapshot()
             case .unconfirmed:
                 return nil
+            case .alreadyPaused:
+                return snapshot()
             }
         }
+    }
+
+    func pause(
+        expectedSourceIdentifier: String,
+        selectionContext: MediaPlaybackSelectionContext,
+        before deadline: Date
+    ) -> MediaPlaybackPauseResult {
+        withLock { selectionContextsValue.append(selectionContext) }
+        if pauseResult == .alreadyPaused {
+            return withLock {
+                currentState = .paused
+                return .notIssued(snapshot: snapshot(), reason: "preflight_not_playing")
+            }
+        }
+
+        guard let snapshot = pause(
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            before: deadline
+        ) else {
+            return .issuedUnconfirmed(snapshot: nil, reason: "no_confirmation")
+        }
+        return .confirmed(snapshot)
     }
 
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot? {
