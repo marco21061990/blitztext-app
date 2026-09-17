@@ -1,8 +1,33 @@
 # Media Playback During Dictation
 
-Status: IMPLEMENTED - manual runtime acceptance pending
+Status: IMPLEMENTED - YouTube restore unconfirmed in current app-level acceptance
 Last updated: 2026-09-17
 Decision source: approved grilling session
+
+## Current live acceptance status
+
+A full app-level smoke run on 2026-09-17 used the installed universal build at
+`/Applications/Blitztext.app`, built from the reliability changes now included
+in `origin/main`. With a genuinely playing YouTube video in the actual
+foreground Chrome context, Blitztext classified one unique playing source,
+sent the explicit Accessibility pause action, and confirmed the same source as
+paused. The pause operation completed in about 29 ms.
+
+The terminal cancellation path did not complete the inverse operation: the
+restore result was unconfirmed after about 424 ms and the YouTube player still
+showed its `Play`/`Wiedergeben` control. YouTube pause is therefore evidenced;
+YouTube restore in the complete Blitztext lifecycle remains an open failure.
+The earlier adapter-only run that restored playback successfully is recorded
+as transport evidence, but is not equivalent to a successful app-level
+recording lifecycle.
+
+A separate run with YouTube open but not in Chrome's actual foreground context
+correctly performed no pause. That is the intentional foreground/context
+policy and must not be counted as a YouTube-control failure.
+
+Until restore is independently confirmed, the implementation must remain
+fail-open: it must not issue a blind Play, retry through JavaScript or keyboard
+events, or claim that YouTube playback was restored.
 
 ## Purpose
 
@@ -275,6 +300,10 @@ macOS:
   confirmed the same source as paused, and restored it to playing. This proves
   the current adapter transport and confirmation path; the complete Blitztext
   recording lifecycle and the multi-source manual scenarios remain open.
+- 2026-09-17: the complete installed-app cancellation path was exercised with
+  the same kind of playing foreground YouTube source. Pause was confirmed, but
+  restore remained unconfirmed and the player stayed paused. This supersedes
+  any interpretation of the adapter-only run as full lifecycle acceptance.
 
 ## Resuming after context compression
 
@@ -291,6 +320,7 @@ When this task resumes after context compression:
 
 ## Next action
 
-Perform the manual Spotify and Chrome acceptance scenarios plus the documented
-failure and hotkey lifecycle cases. Do not mark the feature complete from local
-tests, a successful build, or an adapter-only probe alone.
+Resolve and re-run the complete YouTube restore lifecycle, then perform the
+manual Spotify and Chrome acceptance scenarios plus the documented failure and
+hotkey lifecycle cases. Do not mark the feature complete from local tests, a
+successful build, or an adapter-only probe alone.

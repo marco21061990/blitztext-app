@@ -42,6 +42,13 @@ transcription. If preparation times out or cannot prove ownership for a source,
 the workflow starts without media control for that source. The popover shows
 when media is being checked, paused, restored, or deliberately left alone.
 
+Current acceptance caveat: the installed-app smoke test confirmed pausing a
+genuinely playing foreground YouTube video in Chrome, but did not confirm its
+restoration after cancellation. The player remained paused after the bounded
+restore attempt. The adapter-only restore probe is not evidence that the full
+workflow lifecycle is fixed; the feature therefore remains open for YouTube
+restore acceptance and must stay fail-open.
+
 ## Workflow Availability
 
 `AppState.isWorkflowAvailable(_:)` controls whether a workflow can run.
