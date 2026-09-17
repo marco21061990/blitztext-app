@@ -16,7 +16,7 @@ struct MenuBarView: View {
                 workflowPage
             }
         }
-        .frame(width: 340)
+        .frame(width: 430)
         .animation(.easeInOut(duration: 0.2), value: appState.page)
     }
 
@@ -107,6 +107,12 @@ struct MenuBarView: View {
 
             if appState.autoPasteStatusIsVisible, let statusText = appState.autoPasteStatusText {
                 autoPasteStatusBanner(statusText: statusText, pasted: appState.autoPasteSucceeded)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 6)
+            }
+
+            if appState.mediaPlaybackStatus != .idle {
+                mediaPlaybackStatusBanner
                     .padding(.horizontal, 16)
                     .padding(.bottom, 6)
             }
@@ -696,6 +702,12 @@ struct MenuBarView: View {
 
                 Divider()
 
+                if appState.mediaPlaybackStatus != .idle {
+                    mediaPlaybackStatusBanner
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                }
+
                 // Content
                 switch workflow.type {
                 case .transcription, .localTranscription:
@@ -739,6 +751,86 @@ struct MenuBarView: View {
             Spacer()
         }
         .padding(.vertical, 8)
+    }
+
+    private var mediaPlaybackStatusBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: mediaPlaybackStatusSymbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(mediaPlaybackStatusColor)
+                .frame(width: 18, height: 18)
+
+            Text(mediaPlaybackStatusText)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(mediaPlaybackStatusColor.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(mediaPlaybackStatusColor.opacity(0.16), lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(mediaPlaybackStatusText)
+    }
+
+    private var mediaPlaybackStatusText: String {
+        switch appState.mediaPlaybackStatus {
+        case .idle:
+            return ""
+        case .preparing:
+            return "Medien werden geprüft …"
+        case .paused(let provider):
+            return "\(provider.displayName) pausiert"
+        case .restoring(let provider):
+            return "\(provider.displayName) wird fortgesetzt …"
+        case .restored(let provider):
+            return "\(provider.displayName) fortgesetzt"
+        case .externalChange(let provider):
+            return "\(provider.displayName): Nutzeränderung erkannt, nicht automatisch fortgesetzt"
+        case .restoreFailed(let provider):
+            return "\(provider.displayName) konnte nicht automatisch fortgesetzt werden"
+        }
+    }
+
+    private var mediaPlaybackStatusSymbol: String {
+        switch appState.mediaPlaybackStatus {
+        case .idle:
+            return "play.circle"
+        case .preparing:
+            return "ellipsis.circle"
+        case .paused:
+            return "pause.circle.fill"
+        case .restoring:
+            return "arrow.triangle.2.circlepath"
+        case .restored:
+            return "play.circle.fill"
+        case .externalChange:
+            return "hand.raised.fill"
+        case .restoreFailed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var mediaPlaybackStatusColor: Color {
+        switch appState.mediaPlaybackStatus {
+        case .idle, .preparing:
+            return .secondary
+        case .paused, .restoring:
+            return .blue
+        case .restored:
+            return .green
+        case .externalChange:
+            return .orange
+        case .restoreFailed:
+            return .red
+        }
     }
 
     private func workflowIconColor(_ type: WorkflowType) -> Color {

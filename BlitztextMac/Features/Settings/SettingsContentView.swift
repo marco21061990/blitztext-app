@@ -1032,41 +1032,61 @@ struct CustomizeSettingsView: View {
     private func shortcutRow(for type: WorkflowType) -> some View {
         let binding = appState.shortcutBinding(for: type)
         let isRecording = recordingWorkflow == type
+        let anotherWorkflowIsRecording = recordingWorkflow != nil && !isRecording
 
         return VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 5) {
+            HStack(alignment: .top, spacing: 10) {
                 Image(systemName: type.icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(type == .localTranscription ? .green : .secondary)
+                    .frame(width: 20, height: 20)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(appState.displayName(for: type))
-                        .font(.system(size: 11.5, weight: .medium))
-                        .lineLimit(1)
-                    Text(binding.displayLabel)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(appState.workflowSubtitle(for: type))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-                ShortcutRecorderField(
-                    binding: binding,
-                    isRecording: isRecording,
-                    onBegin: { beginShortcutRecording(for: type) },
-                    onFinish: { candidate, captureError in
-                        finishShortcutRecording(
-                            for: type,
-                            candidate: candidate,
-                            captureError: captureError
-                        )
+            HStack(alignment: .center, spacing: 8) {
+                Text("Tastenkürzel")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 82, alignment: .leading)
+
+                ZStack(alignment: .leading) {
+                    if !isRecording {
+                        HotkeyBadge(label: binding.displayLabel, enabled: binding.isEnabled)
+                            .padding(.leading, 7)
+                            .allowsHitTesting(false)
                     }
-                )
-                .frame(width: 120, height: 26)
+
+                    ShortcutRecorderField(
+                        binding: binding,
+                        isRecording: isRecording,
+                        onBegin: { beginShortcutRecording(for: type) },
+                        onFinish: { candidate, captureError in
+                            finishShortcutRecording(
+                                for: type,
+                                candidate: candidate,
+                                captureError: captureError
+                            )
+                        }
+                    )
+                    .opacity(isRecording ? 1 : 0.01)
+                    .accessibilityLabel("Tastenkürzel für \(appState.displayName(for: type))")
+                }
+                .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .leading)
 
                 Toggle(
-                    "",
+                    "Aktiv",
                     isOn: Binding(
                         get: { appState.shortcutBinding(for: type).isEnabled },
                         set: { isEnabled in
@@ -1074,40 +1094,63 @@ struct CustomizeSettingsView: View {
                         }
                     )
                 )
-                .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .frame(width: 26)
+                .help("Tastenkürzel aktivieren oder deaktivieren")
+            }
 
-                Button {
-                    updateShortcutEnabled(for: type, isEnabled: false)
-                } label: {
-                    Image(systemName: "xmark.circle")
-                        .font(.system(size: 10, weight: .semibold))
+            HStack(spacing: 8) {
+                Button(isRecording ? "Abbrechen" : "Ändern") {
+                    if isRecording {
+                        cancelShortcutRecording(for: type)
+                    } else {
+                        _ = beginShortcutRecording(for: type)
+                    }
                 }
                 .buttonStyle(SubtleButtonStyle())
-                .help("Shortcut deaktivieren")
-                .accessibilityLabel("Shortcut deaktivieren")
-                .disabled(!binding.isEnabled)
+                .foregroundStyle(isRecording ? .orange : .blue)
+                .disabled(anotherWorkflowIsRecording)
 
                 Button {
                     resetShortcut(for: type)
                 } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 10, weight: .semibold))
+                    Text("Zurücksetzen")
                 }
                 .buttonStyle(SubtleButtonStyle())
-                .help("Standardbelegung wiederherstellen")
+                .disabled(isRecording || anotherWorkflowIsRecording)
+
+                Spacer(minLength: 0)
             }
 
-            if let errorText = shortcutErrors[type] {
-                Text(errorText)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 23)
+            Group {
+                if let errorText = shortcutErrors[type] {
+                    Text(errorText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(" ")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.clear)
+                }
             }
+            .frame(minHeight: 15, alignment: .top)
+            .padding(.leading, 30)
+            .accessibilityHidden(shortcutErrors[type] == nil)
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(isRecording ? 0.06 : 0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    isRecording ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.07),
+                    lineWidth: isRecording ? 1.2 : 0.5
+                )
+        )
+        .animation(.easeInOut(duration: 0.15), value: isRecording)
     }
 
     private func beginShortcutRecording(for type: WorkflowType) -> Bool {
@@ -1116,6 +1159,14 @@ struct CustomizeSettingsView: View {
         shortcutErrors[type] = nil
         appState.setShortcutCaptureActive(true)
         return true
+    }
+
+    private func cancelShortcutRecording(for type: WorkflowType) {
+        guard recordingWorkflow == type else { return }
+
+        appState.setShortcutCaptureActive(false)
+        recordingWorkflow = nil
+        shortcutErrors[type] = nil
     }
 
     private func finishShortcutRecording(
@@ -1254,6 +1305,10 @@ private final class ShortcutRecorderNSView: NSView {
 
         if isRecording, !isCapturing {
             beginCapture()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isCapturing else { return }
+                self.window?.makeFirstResponder(self)
+            }
         } else if !isRecording, isCapturing {
             endCapture()
         }
@@ -1341,7 +1396,7 @@ private final class ShortcutRecorderNSView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
         (isCapturing ? NSColor.selectedControlColor : NSColor.controlBackgroundColor).setFill()
         path.fill()
         (isCapturing ? NSColor.keyboardFocusIndicatorColor : NSColor.separatorColor).setStroke()

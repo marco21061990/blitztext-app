@@ -143,7 +143,9 @@ For behavior changes, build and launch the app, then check the relevant path:
 8. Confirm text is copied or pasted. If auto-paste fails, confirm the app shows
    a copied fallback message instead of claiming the text was inserted.
 9. With media playback enabled, verify a playing Spotify or YouTube-in-Chrome
-   source pauses before recording and resumes only after successful paste.
+   source pauses before recording and resumes only after successful paste. Also
+   verify that when both explicitly report `playing`, both confirmed pauses are
+   restored independently.
 10. Verify an already-paused, unsupported, permission-denied, changed, or
     externally resumed source is left alone and that recording still starts.
 11. Confirm temporary recordings are removed on best effort.

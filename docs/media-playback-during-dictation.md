@@ -1,7 +1,7 @@
 # Media Playback During Dictation
 
-Status: IMPLEMENTED - build and runtime acceptance pending
-Last updated: 2026-09-16
+Status: IMPLEMENTED - manual runtime acceptance pending
+Last updated: 2026-09-17
 Decision source: approved grilling session
 
 ## Purpose
@@ -17,7 +17,10 @@ the Mac and must not add a backend, telemetry, or a new network destination.
 - AirPods are not a special trigger or filter. The behavior is identical for
   AirPods, Mac speakers, and other audio devices.
 - Pause playback; do not change volume or mute an application.
-- Control the active media source, not every open application.
+- Control an active supported media source, not every open application. If no
+  supported player is frontmost and multiple supported sources explicitly
+  report `playing`, pause each one only after its own state-aware confirmation
+  and treat the confirmed pauses as one recording session.
 - First-release acceptance is limited to Spotify and YouTube in Chrome. Other
   players remain untouched until separately supported.
 - Try to pause before recording starts, with a maximum 500 ms control window.
@@ -27,8 +30,9 @@ the Mac and must not add a backend, telemetry, or a new network destination.
 - If the initial playback state is unknown, do not pause and do not later send
   Play for that session.
 - Resume only a source that was confirmed as playing and confirmed as paused by
-  Blitztext itself.
-- After successful insertion, resume the owned source. For cancellation,
+  Blitztext itself. Each source has independent ownership and restoration
+  checks.
+- After successful insertion, resume each owned source. For cancellation,
   rejected recordings, or processing errors, restore it once the terminal
   outcome is known.
 - If the user or another process starts playback, do not pause it again and do
@@ -95,9 +99,9 @@ Introduce a local media-control boundary, for example:
 
 - `MediaPlaybackAdapter`: player-specific capability, state inspection, pause,
   and resume operations.
-- `MediaPlaybackCoordinator`: selects the active supported adapter, owns the
-  per-recording session, applies the 500 ms deadline, and handles fail-open
-  behavior.
+- `MediaPlaybackCoordinator`: selects the active supported adapter or adapters,
+  owns the per-recording session, applies the 500 ms deadline, and handles
+  fail-open behavior.
 - `MediaPlaybackSession`: records the source identity, initial playing state,
   confirmed pause ownership, external changes, and whether restoration already
   happened.
@@ -157,6 +161,8 @@ macOS:
 
 - Spotify is playing: pause before recording and resume after successful paste.
 - YouTube is playing in Chrome: same pause and safe-resume behavior.
+- Spotify and YouTube both report `playing`: pause and restore each confirmed
+  source independently instead of treating the combination as a no-op.
 - The source is already paused: it stays paused; no Play is sent.
 - No source is playing: nothing starts later.
 - The initial state is unknown: recording proceeds without media control.
@@ -174,12 +180,11 @@ macOS:
 
 ## Verification
 
-- [x] Add focused tests for the coordinator/session state machine, including stale
-  callbacks, duplicate restoration, unknown state, external changes, and
-  timeout behavior.
+- [x] Add focused tests for the coordinator/session state machine, including
+  multi-source pause/restore, partial confirmation, stale callbacks, duplicate
+  restoration, unknown state, external changes, and timeout behavior.
 - [x] Run `git diff --check`.
-- [ ] Run `./build.sh --debug` from the repository root; currently blocked by
-  the missing full Xcode installation.
+- [x] Run `./build.sh --debug` from the repository root with full Xcode.
 - [ ] Perform the manual macOS scenarios above with Spotify and Chrome.
 - [x] Keep local build products, generated Xcode project files, private media, and
   runtime settings outside the commit.
@@ -204,10 +209,11 @@ macOS:
   unsupported `example.com` tab exposed no player and a paused video exposed
   only `Play`.
 - 2026-09-16: local implementation completed. `MediaPlaybackCoordinator` uses
-  serialized control actions, a separate 500 ms timeout path, explicit Spotify
-  Apple Events and Chrome Accessibility adapters, per-recording ownership, and
-  fail-open restoration rules. All workflow lifecycle calls now route through
-  `AppState`.
+  concurrent provider inspection with frontmost-provider priority, serialized
+  control actions, a separate 500 ms timeout path, explicit Spotify Apple
+  Events and Chrome Accessibility adapters, bounded state reconciliation,
+  per-recording ownership, and fail-open restoration rules. All workflow
+  lifecycle calls now route through `AppState`.
 - 2026-09-16: `MediaPlaybackSessionTests` and
   `MediaPlaybackCoordinatorTests` passed with the Command Line Tools SDK.
   AppState, workflow, service, and view dependencies type-checked in Swift 5
@@ -229,9 +235,24 @@ macOS:
 - 2026-09-16: an all-source Swift typecheck exceeded the 180-second limit on
   the Command Line Tools host without a diagnostic; the focused partitions
   above completed successfully.
-- 2026-09-16: `xcodegen generate` passed. `./build.sh --debug` remains blocked
-  because the host has only `/Library/Developer/CommandLineTools` selected and
-  no full Xcode installation was found.
+- 2026-09-16: `xcodegen generate` passed. At that time `./build.sh --debug`
+  was blocked because the host had only
+  `/Library/Developer/CommandLineTools` selected and no full Xcode installation
+  was found.
+- 2026-09-17: the current worktree built successfully with full Xcode at
+  `/Users/marcoschmeikal/Xcode.app`; the resulting app is universal
+  (`arm64`, `x86_64`) and locally Development-signed. This proves build and
+  packaging readiness only, not the manual player acceptance below.
+- 2026-09-17: live Chrome Accessibility inspection showed a playing YouTube
+  `movie_player` with an explicit `Pause` control at the current foreground
+  tab. The coordinator's real end-to-end pause/restore sequence remains
+  pending manual app acceptance.
+- 2026-09-17: the running app reproduced the simultaneous-source edge case:
+  Spotify and YouTube both logged as `playing`, after which the previous
+  exactly-one-source rule intentionally issued no pause. The coordinator was
+  changed to pause and independently own every fully identified playing source
+  when no supported player is frontmost; a failed confirmation remains
+  fail-open for that source.
 
 ## Resuming after context compression
 

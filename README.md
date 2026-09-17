@@ -16,7 +16,11 @@ This is a learning and experimentation project, not a polished product.
 - **Blitztext $%&!**: turn frustrated speech into a calmer message.
 - **Blitztext :)**: add fitting emojis to dictated text.
 - **Media playback**: optionally pause active Spotify or YouTube playback in
-  Chrome while dictating, then restore only a pause owned by Blitztext.
+  Chrome while dictating, then restore only a pause owned by Blitztext. The
+  popover shows the pause/restoration state. If Spotify and YouTube both
+  explicitly report active playback, Blitztext pauses each confirmed source
+  and restores only those owned pauses. It fails open when ownership or
+  permission cannot be confirmed.
 
 ## Important Preview Notes
 
@@ -112,7 +116,7 @@ For Spotify playback control, allow Blitztext under **System Settings -> Privacy
 
 ## Shortcuts
 
-All six workflows have configurable global shortcuts. Open **Einstellungen -> Anpassen**, click a shortcut field, and press the desired combination. A shortcut may use `Fn`, `Shift`, `Ctrl`, `Option`, or `Cmd` plus one letter, number, Space, or F-key. Single ordinary keys, Escape, and media keys are not accepted. Existing defaults remain available through the reset controls.
+All six workflows have configurable global shortcuts. Open **Einstellungen -> Anpassen**, choose a workflow card, and click **Ändern** or its keycap field. Press the desired combination to save it. A shortcut may use `Fn`, `Shift`, `Ctrl`, `Option`, or `Cmd` plus one letter, number, Space, or F-key. Single ordinary keys, Escape, and media keys are not accepted. Existing defaults remain available through the reset controls.
 
 The **Halten** mode records while the shortcut is held and stops on release. The **Drücken** mode starts and stops with repeated presses; Escape remains the fixed cancellation key. The switch or the clear button disables a workflow without discarding its saved shortcut. Shortcut changes take effect immediately and do not interrupt an ongoing recording.
 

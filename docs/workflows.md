@@ -29,11 +29,16 @@ Every workflow provides:
 Workflows should not own menu bar status or paste behavior.
 
 Before `Workflow.start()` is called, `AppState` gives
-`MediaPlaybackCoordinator` up to 500 ms to inspect and explicitly pause one
-supported active source. The setting **Wiedergabe automatisch pausieren** is
+`MediaPlaybackCoordinator` up to 500 ms to inspect and explicitly pause one or
+more supported active sources. Provider inspections run in parallel. A
+supported frontmost provider is preferred; without one, the coordinator
+requires a complete inspection and explicit source identity for every playing
+provider. Each confirmation is independently owned and briefly polled within
+the same bounded path. The setting **Wiedergabe automatisch pausieren** is
 enabled by default and applies to every recording workflow, including local
-transcription. If preparation times out or cannot prove ownership, the
-workflow starts without media control.
+transcription. If preparation times out or cannot prove ownership for a source,
+the workflow starts without media control for that source. The popover shows
+when media is being checked, paused, restored, or deliberately left alone.
 
 ## Workflow Availability
 

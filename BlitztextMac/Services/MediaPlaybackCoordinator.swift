@@ -12,10 +12,15 @@ protocol MediaPlaybackAdapter: AnyObject {
 }
 
 final class MediaPlaybackCoordinator {
-    static let recordingPreparationBudget: TimeInterval = 0.5
+    static let recordingPreparationBudget = MediaPlaybackTiming.preparationBudget
     private static let monitorInterval: TimeInterval = 0.2
 
     private let adapters: [any MediaPlaybackAdapter]
+    private let inspectionQueue = DispatchQueue(
+        label: "app.blitztext.mac.media-playback-inspections",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
     private let controlQueue = DispatchQueue(
         label: "app.blitztext.mac.media-playback",
         qos: .userInitiated
@@ -27,6 +32,8 @@ final class MediaPlaybackCoordinator {
     private let stateLock = NSLock()
     private let logger = Logger(subsystem: "app.blitztext.mac", category: "MediaPlayback")
     private let frontmostBundleIdentifier: () -> String?
+
+    var onStatusChange: ((MediaPlaybackStatus) -> Void)?
 
     private var pendingPreparation: PendingPreparation?
     private var activeSession: ActiveSession?
@@ -56,6 +63,8 @@ final class MediaPlaybackCoordinator {
             }
             return
         }
+
+        notifyStatus(.preparing)
 
         let requestID = UUID()
         let startedAt = Date()
@@ -106,66 +115,98 @@ final class MediaPlaybackCoordinator {
         guard isPending(requestID: requestID) else { return }
         finishAnyActiveSessionOnControlQueue()
 
-        guard let candidate = selectCandidate(before: deadline) else {
+        guard let candidates = selectCandidates(before: deadline) else {
             completeWithoutSession(requestID: requestID)
             return
         }
 
         guard isPending(requestID: requestID) else { return }
 
-        guard Date() < deadline, candidate.snapshot.state == .playing,
-              let sourceIdentifier = candidate.snapshot.sourceIdentifier else {
+        guard Date() < deadline else {
             completeWithoutSession(requestID: requestID)
             return
         }
 
-        var stateMachine = MediaPlaybackSessionStateMachine()
-        guard let handle = stateMachine.begin(
-            sourceIdentifier: sourceIdentifier,
-            initialState: candidate.snapshot.state
-        ) else {
-            completeWithoutSession(requestID: requestID)
-            return
+        let handle = MediaPlaybackSessionHandle(id: UUID())
+        var ownedSources: [OwnedSource] = []
+
+        for candidate in candidates {
+            guard Date() < deadline else { break }
+            guard isPending(requestID: requestID) else { break }
+            guard candidate.snapshot.state == .playing,
+                  let sourceIdentifier = candidate.snapshot.sourceIdentifier,
+                  !sourceIdentifier.isEmpty else {
+                continue
+            }
+
+            var stateMachine = MediaPlaybackSessionStateMachine()
+            guard stateMachine.begin(
+                sourceIdentifier: sourceIdentifier,
+                initialState: candidate.snapshot.state,
+                sessionID: handle.id
+            ) != nil else {
+                continue
+            }
+
+            let pauseStartedAt = Date()
+            let pausedSnapshot = candidate.adapter.pause(
+                expectedSourceIdentifier: sourceIdentifier,
+                before: deadline
+            )
+            let pauseDuration = Int((Date().timeIntervalSince(pauseStartedAt) * 1000).rounded())
+            let pauseReason: String
+            if pausedSnapshot == nil {
+                pauseReason = "no_confirmation"
+            } else if pausedSnapshot?.sourceIdentifier != sourceIdentifier {
+                pauseReason = "source_changed"
+            } else if pausedSnapshot?.state != .paused {
+                pauseReason = "state_not_paused"
+            } else {
+                pauseReason = "confirmed"
+            }
+            logger.info(
+                "Media pause provider=\(candidate.snapshot.provider.rawValue, privacy: .public) result=\(pauseReason, privacy: .public) state=\(pausedSnapshot?.state.logValue ?? "none", privacy: .public) duration_ms=\(pauseDuration, privacy: .public)"
+            )
+
+            guard let pausedSnapshot,
+                  pausedSnapshot.sourceIdentifier == sourceIdentifier,
+                  pausedSnapshot.state == .paused,
+                  stateMachine.confirmPause(
+                      handle,
+                      sourceIdentifier: sourceIdentifier,
+                      observedState: pausedSnapshot.state
+                  ) else {
+                logger.info("Media pause was not confirmed; continuing without ownership")
+                continue
+            }
+
+            ownedSources.append(
+                OwnedSource(
+                    adapter: candidate.adapter,
+                    stateMachine: stateMachine
+                )
+            )
         }
 
-        guard Date() < deadline, isPending(requestID: requestID) else {
-            completeWithoutSession(requestID: requestID)
-            return
-        }
-
-        guard let pausedSnapshot = candidate.adapter.pause(
-            expectedSourceIdentifier: sourceIdentifier,
-            before: deadline
-        ) else {
-            logger.info("Media pause was not confirmed; continuing without ownership")
-            completeWithoutSession(requestID: requestID)
-            return
-        }
-
-        guard pausedSnapshot.sourceIdentifier == sourceIdentifier,
-              pausedSnapshot.state == .paused,
-              stateMachine.confirmPause(
-                  handle,
-                  sourceIdentifier: sourceIdentifier,
-                  observedState: pausedSnapshot.state
-              ) else {
-            logger.info("Media pause was not confirmed; continuing without ownership")
+        guard !ownedSources.isEmpty else {
             completeWithoutSession(requestID: requestID)
             return
         }
 
         let prepared = ActiveSession(
             handle: handle,
-            adapter: candidate.adapter,
-            stateMachine: stateMachine,
+            ownedSources: ownedSources,
             outcome: nil
         )
 
-        guard Date() < deadline else {
+        guard Date() < deadline, isPending(requestID: requestID) else {
             // A player call may have started before the deadline but return
-            // after it. Do not adopt a late pause for the recording; restore
-            // the confirmed side effect immediately and continue fail-open.
-            logger.info("Media pause completed after the 500 ms budget; restoring immediately")
+            // after it, or preparation may have been cancelled while a
+            // player call was in flight. Do not adopt the confirmed side
+            // effects for the recording; restore them immediately.
+            if Date() >= deadline {
+                logger.info("Media pause completed after the 500 ms budget; restoring immediately")
+            }
             restorePreparedSession(prepared)
             completeWithoutSession(requestID: requestID)
             return
@@ -181,28 +222,62 @@ final class MediaPlaybackCoordinator {
         }
 
         guard let completion else {
-            // The request was cancelled while the player operation was in
-            // flight. Resume only after re-checking the same owned source.
+            // The request was cancelled while one of the player operations
+            // was in flight. Resume only after re-checking each owned source.
             restorePreparedSession(prepared)
             return
         }
 
-        logger.info("Media pause confirmed provider=\(candidate.snapshot.provider.rawValue, privacy: .public)")
+        for source in prepared.ownedSources {
+            logger.info("Media pause confirmed provider=\(source.adapter.provider.rawValue, privacy: .public)")
+            notifyStatus(.paused(source.adapter.provider))
+        }
         deliver(completion, value: handle)
         scheduleMonitoring(for: prepared)
     }
 
-    private func selectCandidate(before deadline: Date) -> (adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)? {
-        var snapshots: [(adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)] = []
+    private func selectCandidates(before deadline: Date) -> [(adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)]? {
+        let frontmostProvider = provider(for: frontmostBundleIdentifier())
+        let collector = InspectionCollector(count: adapters.count)
+        let group = DispatchGroup()
+        let completionSignals = adapters.map { _ in DispatchSemaphore(value: 0) }
 
-        for adapter in adapters {
-            guard Date() < deadline else { break }
-            snapshots.append((adapter, adapter.inspect()))
+        for (index, adapter) in adapters.enumerated() {
+            group.enter()
+            inspectionQueue.async { [weak self] in
+                let startedAt = Date()
+                let snapshot = adapter.inspect()
+                collector.store(snapshot, at: index)
+                let duration = Int((Date().timeIntervalSince(startedAt) * 1000).rounded())
+                self?.logger.info(
+                    "Media inspect provider=\(snapshot.provider.rawValue, privacy: .public) state=\(snapshot.state.logValue, privacy: .public) source_present=\(snapshot.sourceIdentifier != nil, privacy: .public) duration_ms=\(duration, privacy: .public)"
+                )
+                group.leave()
+                completionSignals[index].signal()
+            }
         }
+
+        let inspectionTimedOut: Bool
+        if let frontmostProvider,
+           let frontmostIndex = adapters.firstIndex(where: { $0.provider == frontmostProvider }) {
+            // A slow background provider must not consume the foreground
+            // provider's recording budget. Its result is irrelevant when the
+            // active app is a supported provider.
+            inspectionTimedOut = completionSignals[frontmostIndex]
+                .wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow)) == .timedOut
+        } else {
+            inspectionTimedOut = group.wait(timeout: .now() + max(0, deadline.timeIntervalSinceNow)) == .timedOut
+        }
+        let completedSnapshots = collector.values
+        let snapshots: [(adapter: any MediaPlaybackAdapter, snapshot: MediaPlaybackSnapshot)] = adapters.enumerated()
+            .compactMap { index, adapter in
+                guard let snapshot = completedSnapshots[index] else { return nil }
+                return (adapter: adapter, snapshot: snapshot)
+            }
 
         guard !snapshots.isEmpty else { return nil }
 
-        if let frontmostProvider = provider(for: frontmostBundleIdentifier()) {
+        if let frontmostProvider {
             guard let frontmost = snapshots.first(where: { $0.snapshot.provider == frontmostProvider }) else {
                 return nil
             }
@@ -210,17 +285,36 @@ final class MediaPlaybackCoordinator {
             // When a supported app is frontmost but its active tab/player is
             // paused, stopped, unsupported, or unreadable, never reach into a
             // different background player.
-            guard frontmost.snapshot.state == .playing else { return nil }
-            return frontmost
+            guard frontmost.snapshot.state == .playing,
+                  let sourceIdentifier = frontmost.snapshot.sourceIdentifier,
+                  !sourceIdentifier.isEmpty else { return nil }
+            return [frontmost]
+        }
+
+        guard !inspectionTimedOut, completedSnapshots.allSatisfy({ $0 != nil }) else {
+            // Without a complete inspection, a missing result could hide a
+            // second playing source. Keep the selection fail-open.
+            return nil
         }
 
         let playing = snapshots.filter { $0.snapshot.state == .playing }
-        guard playing.count == 1 else {
-            // Multiple playing sources are ambiguous; fail open instead of
-            // pausing a source that may not be the one the user hears.
+        guard !playing.isEmpty,
+              playing.allSatisfy({
+                  guard let sourceIdentifier = $0.snapshot.sourceIdentifier else { return false }
+                  return !sourceIdentifier.isEmpty
+              }) else {
             return nil
         }
-        return playing[0]
+
+        if playing.count > 1 {
+            let providers = playing
+                .map { $0.snapshot.provider.rawValue }
+                .joined(separator: ",")
+            logger.info(
+                "Media selection multiple playing sources providers=\(providers, privacy: .public); attempting explicit pause confirmation for each"
+            )
+        }
+        return playing
     }
 
     private func provider(for bundleIdentifier: String?) -> MediaPlaybackProvider? {
@@ -307,27 +401,51 @@ final class MediaPlaybackCoordinator {
     }
 
     private func restorePreparedSession(_ active: ActiveSession) {
-        let current = active.adapter.inspect()
+        for source in active.ownedSources {
+            restorePreparedSource(source, handle: active.handle)
+        }
+    }
+
+    private func restorePreparedSource(_ source: OwnedSource, handle: MediaPlaybackSessionHandle) {
+        let current = source.adapter.inspect()
         let currentSourceIdentifier = current.sourceIdentifier ?? ""
-        let shouldRestore: Bool = withStateLock {
-            active.stateMachine.shouldRestore(
-                active.handle,
+        let decision: (shouldRestore: Bool, externalChangeDetected: Bool) = withStateLock {
+            let shouldRestore = source.stateMachine.shouldRestore(
+                handle,
                 sourceIdentifier: currentSourceIdentifier,
                 currentState: current.state
             )
+            return (
+                shouldRestore: shouldRestore,
+                externalChangeDetected: source.stateMachine.session?.externalChangeDetected == true
+            )
         }
 
-        guard shouldRestore else {
-            logger.info("Media restore skipped provider=\(active.adapter.provider.rawValue, privacy: .public) state=\(current.state.logValue, privacy: .public)")
+        guard decision.shouldRestore else {
+            if decision.externalChangeDetected {
+                notifyStatus(.externalChange(source.adapter.provider))
+            }
+            logger.info("Media restore skipped provider=\(source.adapter.provider.rawValue, privacy: .public) state=\(current.state.logValue, privacy: .public)")
             return
         }
 
-        let restored = active.adapter.resume(expectedSourceIdentifier: active.handleSourceIdentifier)
+        notifyStatus(.restoring(source.adapter.provider))
+        let restoreStartedAt = Date()
+        let restored = source.adapter.resume(expectedSourceIdentifier: source.handleSourceIdentifier)
         let resultingState = restored?.state ?? .unknown
+        let restoreDuration = Int((Date().timeIntervalSince(restoreStartedAt) * 1000).rounded())
         if resultingState == .playing {
-            logger.info("Media restored provider=\(active.adapter.provider.rawValue, privacy: .public)")
+            notifyStatus(.restored(source.adapter.provider))
+            logger.info(
+                "Media restore provider=\(source.adapter.provider.rawValue, privacy: .public) result=confirmed duration_ms=\(restoreDuration, privacy: .public)"
+            )
+            logger.info("Media restored provider=\(source.adapter.provider.rawValue, privacy: .public)")
         } else {
-            logger.error("Media restore was not confirmed provider=\(active.adapter.provider.rawValue, privacy: .public) state=\(resultingState.logValue, privacy: .public)")
+            notifyStatus(.restoreFailed(source.adapter.provider))
+            logger.error(
+                "Media restore provider=\(source.adapter.provider.rawValue, privacy: .public) result=unconfirmed state=\(resultingState.logValue, privacy: .public) duration_ms=\(restoreDuration, privacy: .public)"
+            )
+            logger.error("Media restore was not confirmed provider=\(source.adapter.provider.rawValue, privacy: .public) state=\(resultingState.logValue, privacy: .public)")
         }
     }
 
@@ -344,14 +462,20 @@ final class MediaPlaybackCoordinator {
         }
         guard shouldObserve else { return }
 
-        let snapshot = active.adapter.inspect()
+        for source in active.ownedSources {
+            let snapshot = source.adapter.inspect()
+            withStateLock {
+                guard self.activeSession === active, !active.isFinishing else { return }
+                source.stateMachine.observe(
+                    active.handle,
+                    sourceIdentifier: snapshot.sourceIdentifier ?? "",
+                    state: snapshot.state
+                )
+            }
+        }
+
         let shouldContinue: Bool = withStateLock {
             guard self.activeSession === active, !active.isFinishing else { return false }
-            active.stateMachine.observe(
-                active.handle,
-                sourceIdentifier: snapshot.sourceIdentifier ?? "",
-                state: snapshot.state
-            )
             return true
         }
 
@@ -364,6 +488,10 @@ final class MediaPlaybackCoordinator {
         DispatchQueue.main.async {
             completion(value)
         }
+    }
+
+    private func notifyStatus(_ status: MediaPlaybackStatus) {
+        onStatusChange?(status)
     }
 
     private func withStateLock<T>(_ body: () -> T) -> T {
@@ -385,25 +513,56 @@ final class MediaPlaybackCoordinator {
 
     private final class ActiveSession {
         let handle: MediaPlaybackSessionHandle
-        let adapter: any MediaPlaybackAdapter
-        var stateMachine: MediaPlaybackSessionStateMachine
+        let ownedSources: [OwnedSource]
         var isFinishing = false
         var outcome: MediaPlaybackOutcome?
+
+        init(
+            handle: MediaPlaybackSessionHandle,
+            ownedSources: [OwnedSource],
+            outcome: MediaPlaybackOutcome?
+        ) {
+            self.handle = handle
+            self.ownedSources = ownedSources
+            self.outcome = outcome
+        }
+    }
+
+    private final class OwnedSource {
+        let adapter: any MediaPlaybackAdapter
+        var stateMachine: MediaPlaybackSessionStateMachine
 
         var handleSourceIdentifier: String {
             stateMachine.session?.sourceIdentifier ?? ""
         }
 
         init(
-            handle: MediaPlaybackSessionHandle,
             adapter: any MediaPlaybackAdapter,
-            stateMachine: MediaPlaybackSessionStateMachine,
-            outcome: MediaPlaybackOutcome?
+            stateMachine: MediaPlaybackSessionStateMachine
         ) {
-            self.handle = handle
             self.adapter = adapter
             self.stateMachine = stateMachine
-            self.outcome = outcome
+        }
+    }
+
+    private final class InspectionCollector {
+        private let lock = NSLock()
+        private var snapshots: [MediaPlaybackSnapshot?]
+
+        init(count: Int) {
+            snapshots = Array(repeating: nil, count: count)
+        }
+
+        func store(_ snapshot: MediaPlaybackSnapshot, at index: Int) {
+            lock.lock()
+            snapshots[index] = snapshot
+            lock.unlock()
+        }
+
+        var values: [MediaPlaybackSnapshot?] {
+            lock.lock()
+            defer { lock.unlock() }
+            return snapshots
         }
     }
 }
@@ -416,6 +575,39 @@ private extension MediaPlaybackState {
         case .stopped: return "stopped"
         case .unknown: return "unknown"
         }
+    }
+}
+
+private func pollForConfirmedSnapshot(
+    inspect: () -> MediaPlaybackSnapshot,
+    expectedSourceIdentifier: String,
+    expectedState: MediaPlaybackState,
+    timeout: TimeInterval
+) -> MediaPlaybackSnapshot {
+    let deadline = Date().addingTimeInterval(timeout)
+    var latest = inspect()
+
+    while true {
+        if latest.sourceIdentifier == expectedSourceIdentifier,
+           latest.state == expectedState {
+            return latest
+        }
+
+        if latest.sourceIdentifier != nil,
+           latest.sourceIdentifier != expectedSourceIdentifier,
+           latest.state != .unknown {
+            // A different source is an explicit external change. Do not wait
+            // for it to become suitable for the old command.
+            return latest
+        }
+
+        if latest.state == .stopped || Date() >= deadline {
+            return latest
+        }
+
+        let remaining = deadline.timeIntervalSinceNow
+        Thread.sleep(forTimeInterval: min(MediaPlaybackTiming.confirmationPollInterval, remaining))
+        latest = inspect()
     }
 }
 
@@ -460,7 +652,12 @@ final class SpotifyMediaPlaybackAdapter: MediaPlaybackAdapter {
               executeCommand("tell application id \"com.spotify.client\" to pause") else {
             return current
         }
-        return inspect()
+        return pollForConfirmedSnapshot(
+            inspect: inspect,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedState: .paused,
+            timeout: max(0, deadline.timeIntervalSinceNow)
+        )
     }
 
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot? {
@@ -470,7 +667,12 @@ final class SpotifyMediaPlaybackAdapter: MediaPlaybackAdapter {
               executeCommand("tell application id \"com.spotify.client\" to play") else {
             return current
         }
-        return inspect()
+        return pollForConfirmedSnapshot(
+            inspect: inspect,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedState: .playing,
+            timeout: MediaPlaybackTiming.restorationBudget
+        )
     }
 
     private var isRunning: Bool {
@@ -533,7 +735,12 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
               press(located.actionButton) else {
             return locateControl()?.snapshot
         }
-        return inspect()
+        return pollForConfirmedSnapshot(
+            inspect: inspect,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedState: .paused,
+            timeout: max(0, deadline.timeIntervalSinceNow)
+        )
     }
 
     func resume(expectedSourceIdentifier: String) -> MediaPlaybackSnapshot? {
@@ -543,7 +750,12 @@ final class ChromeYouTubeMediaPlaybackAdapter: MediaPlaybackAdapter {
               press(located.actionButton) else {
             return locateControl()?.snapshot
         }
-        return inspect()
+        return pollForConfirmedSnapshot(
+            inspect: inspect,
+            expectedSourceIdentifier: expectedSourceIdentifier,
+            expectedState: .playing,
+            timeout: MediaPlaybackTiming.restorationBudget
+        )
     }
 
     private func locateControl() -> LocatedControl? {

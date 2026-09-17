@@ -34,6 +34,7 @@ final class AppState {
     var autoPasteSucceeded = false
     var autoPasteStatusText: String?
     var autoPasteStatusIsVisible = false
+    var mediaPlaybackStatus: MediaPlaybackStatus = .idle
     var onMenuBarStatusChange: ((MenuBarStatus) -> Void)?
     var onRecordingOverlayStateChange: ((RecordingOverlayState) -> Void)?
     private(set) var isPreparingWorkflow = false
@@ -43,6 +44,7 @@ final class AppState {
     private var lastPopoverPasteTarget: PasteTarget?
     private var menuBarStatusResetTask: Task<Void, Never>?
     private var workflowCleanupTask: Task<Void, Never>?
+    private var mediaPlaybackStatusResetTask: Task<Void, Never>?
 
     // Persisted settings
     var appSettings: AppSettings {
@@ -109,6 +111,11 @@ final class AppState {
         autoSelectFastLocalModelIfNeeded()
         prewarmLocalTranscriptionIfNeeded()
         _ = hotkeyService.updateConfiguration(appSettings.shortcutBindings)
+        mediaPlaybackCoordinator.onStatusChange = { [weak self] status in
+            DispatchQueue.main.async { [weak self] in
+                self?.applyMediaPlaybackStatus(status)
+            }
+        }
     }
 
     // MARK: - Custom Display Names
@@ -249,6 +256,7 @@ final class AppState {
         replaceActiveWorkflowIfNeeded()
         menuBarStatusResetTask?.cancel()
         workflowCleanupTask?.cancel()
+        clearMediaPlaybackStatus()
         autoPasteSucceeded = false
         autoPasteStatusText = nil
         autoPasteStatusIsVisible = false
@@ -346,6 +354,7 @@ final class AppState {
     func resetCurrentWorkflow() {
         finishMediaPlaybackSession(outcome: .cancelled)
         mediaPlaybackCoordinator.cancelPendingPreparation()
+        clearMediaPlaybackStatus()
 
         let workflow = activeWorkflow
         isPreparingWorkflow = false
@@ -368,6 +377,7 @@ final class AppState {
 
         finishMediaPlaybackSession(outcome: .cancelled)
         mediaPlaybackCoordinator.cancelPendingPreparation()
+        clearMediaPlaybackStatus()
 
         let workflow = activeWorkflow
         isPreparingWorkflow = false
@@ -393,6 +403,9 @@ final class AppState {
 
             self.isPreparingWorkflow = false
             self.activeMediaSessionID = handle?.id
+            if handle == nil {
+                self.clearMediaPlaybackStatus()
+            }
             switch activeWorkflow.phase {
             case .idle:
                 activeWorkflow.start()
@@ -764,6 +777,25 @@ final class AppState {
 
     private func notifyRecordingOverlayStateChanged() {
         onRecordingOverlayStateChange?(recordingOverlayState)
+    }
+
+    private func applyMediaPlaybackStatus(_ status: MediaPlaybackStatus) {
+        mediaPlaybackStatusResetTask?.cancel()
+        mediaPlaybackStatus = status
+
+        guard status.isTerminal else { return }
+
+        mediaPlaybackStatusResetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard let self, self.mediaPlaybackStatus == status else { return }
+            self.mediaPlaybackStatus = .idle
+        }
+    }
+
+    private func clearMediaPlaybackStatus() {
+        mediaPlaybackStatusResetTask?.cancel()
+        mediaPlaybackStatusResetTask = nil
+        mediaPlaybackStatus = .idle
     }
 
     private func capturePasteTarget(for source: WorkflowLaunchSource) -> PasteTarget? {

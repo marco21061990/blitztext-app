@@ -8,8 +8,11 @@ struct MediaPlaybackCoordinatorTests {
         try assertStoppedSourceIsUntouched()
         try assertUnknownSourceIsUntouched()
         try assertDisabledSettingSkipsMediaControl()
-        try assertAmbiguousSourcesAreUntouched()
+        try assertMultiplePlayingSourcesPauseAndRestore()
+        try assertUnconfirmedSourceDoesNotBlockConfirmedSource()
         try assertFrontmostSupportedSourceWins()
+        try assertFrontmostSourceIsNotBlockedBySlowBackgroundInspection()
+        try assertStatusLifecycleIsObservable()
         try assertPausedFrontmostSourceDoesNotFallBack()
         try assertSessionsAreSerializedAcrossRetry()
         try assertUnconfirmedPauseNeverResumes()
@@ -172,7 +175,7 @@ struct MediaPlaybackCoordinatorTests {
         }
     }
 
-    private static func assertAmbiguousSourcesAreUntouched() throws {
+    private static func assertMultiplePlayingSourcesPauseAndRestore() throws {
         let first = MockMediaPlaybackAdapter(
             provider: .spotify,
             state: .playing,
@@ -196,8 +199,53 @@ struct MediaPlaybackCoordinatorTests {
         }
         try waitUntil { callbackReceived }
 
-        guard handle == nil, first.pauseCount == 0, second.pauseCount == 0 else {
-            throw TestFailure("Ambiguous playing sources must remain untouched")
+        guard let handle else {
+            throw TestFailure("Multiple explicitly playing sources should produce one group session")
+        }
+        guard first.pauseCount == 1, second.pauseCount == 1,
+              first.state == .paused, second.state == .paused else {
+            throw TestFailure("Each explicitly playing source should be paused once")
+        }
+
+        coordinator.finish(handle, outcome: .successfulPaste)
+        try waitUntil { first.resumeCount == 1 && second.resumeCount == 1 }
+        guard first.state == .playing, second.state == .playing else {
+            throw TestFailure("Each owned pause should be restored")
+        }
+    }
+
+    private static func assertUnconfirmedSourceDoesNotBlockConfirmedSource() throws {
+        let confirmed = MockMediaPlaybackAdapter(
+            provider: .spotify,
+            state: .playing,
+            sourceIdentifier: "spotify:confirmed"
+        )
+        let unconfirmed = MockMediaPlaybackAdapter(
+            provider: .youtubeChrome,
+            state: .playing,
+            sourceIdentifier: "youtube:unconfirmed",
+            pauseResult: .unconfirmed
+        )
+        let coordinator = MediaPlaybackCoordinator(
+            adapters: [confirmed, unconfirmed],
+            frontmostBundleIdentifier: { nil }
+        )
+
+        var handle: MediaPlaybackSessionHandle?
+        coordinator.prepareForRecording(enabled: true) { handle = $0 }
+        try waitUntil { handle != nil }
+
+        guard let handle,
+              confirmed.pauseCount == 1,
+              unconfirmed.pauseCount == 1,
+              confirmed.state == .paused else {
+            throw TestFailure("A confirmed source should remain owned when another source cannot be confirmed")
+        }
+
+        coordinator.finish(handle, outcome: .cancelled)
+        try waitUntil { confirmed.resumeCount == 1 }
+        guard unconfirmed.resumeCount == 0 else {
+            throw TestFailure("An unconfirmed source must never be resumed")
         }
     }
 
@@ -229,6 +277,38 @@ struct MediaPlaybackCoordinatorTests {
         try waitUntil { spotify.resumeCount == 1 }
     }
 
+    private static func assertFrontmostSourceIsNotBlockedBySlowBackgroundInspection() throws {
+        let slowSpotify = MockMediaPlaybackAdapter(
+            provider: .spotify,
+            state: .playing,
+            sourceIdentifier: "spotify:slow-background",
+            inspectDelay: 1.0
+        )
+        let chrome = MockMediaPlaybackAdapter(
+            provider: .youtubeChrome,
+            state: .playing,
+            sourceIdentifier: "youtube:frontmost"
+        )
+        let coordinator = MediaPlaybackCoordinator(
+            adapters: [slowSpotify, chrome],
+            frontmostBundleIdentifier: { "com.google.Chrome" }
+        )
+
+        var handle: MediaPlaybackSessionHandle?
+        coordinator.prepareForRecording(enabled: true) { handle = $0 }
+        try waitUntil(timeout: 0.45) { handle != nil }
+
+        guard let handle else {
+            throw TestFailure("A foreground source should not wait for a slow background inspection")
+        }
+        guard chrome.pauseCount == 1, slowSpotify.pauseCount == 0 else {
+            throw TestFailure("Only the active foreground provider may be paused")
+        }
+
+        coordinator.finish(handle, outcome: .successfulPaste)
+        try waitUntil { chrome.resumeCount == 1 }
+    }
+
     private static func assertPausedFrontmostSourceDoesNotFallBack() throws {
         let spotify = MockMediaPlaybackAdapter(
             provider: .spotify,
@@ -255,6 +335,49 @@ struct MediaPlaybackCoordinatorTests {
 
         guard handle == nil, spotify.pauseCount == 0, youtube.pauseCount == 0 else {
             throw TestFailure("A paused frontmost source must block fallback to a background player")
+        }
+    }
+
+    private static func assertStatusLifecycleIsObservable() throws {
+        let adapter = MockMediaPlaybackAdapter(
+            provider: .spotify,
+            state: .playing,
+            sourceIdentifier: "spotify:status"
+        )
+        let coordinator = MediaPlaybackCoordinator(
+            adapters: [adapter],
+            frontmostBundleIdentifier: { nil }
+        )
+        let statusLock = NSLock()
+        var statuses: [MediaPlaybackStatus] = []
+        coordinator.onStatusChange = { status in
+            statusLock.lock()
+            statuses.append(status)
+            statusLock.unlock()
+        }
+
+        var handle: MediaPlaybackSessionHandle?
+        coordinator.prepareForRecording(enabled: true) { handle = $0 }
+        try waitUntil { handle != nil }
+        guard let handle else { throw TestFailure("Expected a confirmed session") }
+
+        coordinator.finish(handle, outcome: .successfulPaste)
+        try waitUntil {
+            statusLock.lock()
+            defer { statusLock.unlock() }
+            return statuses.contains(.restored(.spotify))
+        }
+
+        statusLock.lock()
+        let observedStatuses = statuses
+        statusLock.unlock()
+        guard observedStatuses == [
+            .preparing,
+            .paused(.spotify),
+            .restoring(.spotify),
+            .restored(.spotify),
+        ] else {
+            throw TestFailure("Media status should expose the complete pause and restore lifecycle")
         }
     }
 
