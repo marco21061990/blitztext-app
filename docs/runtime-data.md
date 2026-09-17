@@ -166,6 +166,13 @@ decision result, and bounded operation duration. They do not contain track
 names, URLs, transcripts, or audio. The popover status is transient in-memory
 state and is not persisted.
 
+The current installed-app evidence confirms the YouTube pause action but not
+the subsequent restore: after a cancellation-path restore attempt, the player
+remained paused. A successful adapter-only `AXPress` probe is not sufficient to
+prove the complete workflow lifecycle. Until the lifecycle is revalidated, no
+blind Play retry or fallback control path may be added; an unconfirmed restore
+must remain fail-open and must not create a false success state.
+
 ## macOS Permissions
 
 ### Microphone
